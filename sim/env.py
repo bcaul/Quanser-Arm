@@ -201,7 +201,6 @@ class QArmSimEnv:
                 startValue=0.0,
             )
             self._joint_slider_ids.append(slider_id)
-
     def _create_floor(self, enable_collision: bool) -> int:
         """Create a translucent base plane to provide spatial reference."""
         base_collision = (
@@ -212,7 +211,7 @@ class QArmSimEnv:
         base_visual = p.createVisualShape(
             shapeType=p.GEOM_BOX,
             halfExtents=[5, 5, 0.002],
-            rgbaColor=(*self.DARK_FLOOR_COLOR[:3], 0.05),
+            rgbaColor=(*self.DARK_FLOOR_COLOR[:3], 0.6),
             specularColor=[0.0, 0.0, 0.0],
             physicsClientId=self.client,
         )
@@ -247,3 +246,51 @@ class QArmSimEnv:
         if self._joint_slider_ids:
             targets = [p.readUserDebugParameter(slider_id) for slider_id in self._joint_slider_ids]
             self.set_joint_positions(targets)
+
+    def get_camera_image(
+        self,
+        width: int = 640,
+        height: int = 480,
+        fov: float = 60.0,
+        near: float = 0.01,
+        far: float = 5.0,
+        distance: float = 0.5,
+        yaw: float = 45.0,
+        pitch: float = -30.0,
+        target: Sequence[float] = (0.0, 0.0, 0.05),
+        return_depth: bool = False,
+    ) -> tuple[int, int, bytes] | tuple[int, int, bytes, list[float]]:
+        """
+        Render an RGB frame from a virtual camera (works in DIRECT/headless mode).
+
+        Returns (width, height, rgba_bytes[, depth_map]). Caller can convert to an image using
+        libraries like Qt, PIL, or OpenCV. If `return_depth` is True, a depth map (list of floats)
+        is also returned to allow background masking.
+        """
+        # Clamp values to avoid invalid camera setups.
+        width = max(4, int(width))
+        height = max(4, int(height))
+        fov = max(1e-3, float(fov))
+        near = max(1e-4, float(near))
+        far = max(near + 1e-3, float(far))
+        distance = max(1e-3, float(distance))
+        view = p.computeViewMatrixFromYawPitchRoll(
+            cameraTargetPosition=list(target),
+            distance=distance,
+            yaw=yaw,
+            pitch=pitch,
+            roll=0.0,
+            upAxisIndex=2,
+        )
+        proj = p.computeProjectionMatrixFOV(fov=fov, aspect=width / float(height), nearVal=near, farVal=far)
+        _, _, rgba, depth, _ = p.getCameraImage(
+            width,
+            height,
+            viewMatrix=view,
+            projectionMatrix=proj,
+            renderer=p.ER_TINY_RENDERER,
+            physicsClientId=self.client,
+        )
+        if return_depth:
+            return width, height, bytes(rgba), depth
+        return width, height, bytes(rgba)

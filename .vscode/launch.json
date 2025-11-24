@@ -19,6 +19,13 @@
       "module": "sim.run_gui",
       "justMyCode": true,
       "args": ["--gui", "--sliders", "--real-time"]
+    },
+    {
+      "name": "Qt Viewer (headless + camera)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "sim.qt_viewer",
+      "justMyCode": true
     }
   ]
 }
