@@ -94,9 +94,9 @@
       xyz="0 0 1" />
     <limit
       lower="0"
-      upper="0"
-      effort="0"
-      velocity="0" />
+      upper="0.9"
+      effort="5"
+      velocity="1" />
   </joint>
   <link
     name="Link2A">
@@ -152,9 +152,9 @@
       xyz="0 0 1" />
     <limit
       lower="0"
-      upper="0"
-      effort="0"
-      velocity="0" />
+      upper="0.9"
+      effort="5"
+      velocity="1" />
   </joint>
   <link
     name="Link1B">
@@ -210,9 +210,9 @@
       xyz="0 0 1" />
     <limit
       lower="0"
-      upper="0"
-      effort="0"
-      velocity="0" />
+      upper="0.9"
+      effort="5"
+      velocity="1" />
   </joint>
   <link
     name="Link2B">
@@ -268,8 +268,8 @@
       xyz="0 0 -1" />
     <limit
       lower="0"
-      upper="0"
-      effort="0"
-      velocity="0" />
+      upper="0.9"
+      effort="5"
+      velocity="1" />
   </joint>
 </robot>
