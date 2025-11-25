@@ -15,6 +15,7 @@ to headless usage. Keep the joint ordering consistent with the URDF:
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -24,6 +25,20 @@ except ImportError as exc:  # pragma: no cover - runtime guard
     raise SystemExit("pybullet is not installed. Run `pip install -e .` first.") from exc
 
 from sim.assets import BaseMeshAssets, DEFAULT_BASE_ASSETS
+
+
+@dataclass
+class KinematicObject:
+    """Metadata for a static/kinematic mesh spawned in the scene."""
+
+    body_id: int
+    visual_path: Path
+    collision_path: Path | None
+    mass: float
+    position: tuple[float, float, float]
+    orientation_xyzw: tuple[float, float, float, float]
+    scale: tuple[float, float, float]
+    rgba: tuple[float, float, float, float] | None
 
 
 class QArmSimEnv:
@@ -81,6 +96,7 @@ class QArmSimEnv:
         self.joint_names: list[str] = []
         self.link_name_to_index: dict[str, int] = {}
         self.movable_joint_indices: list[int] = []
+        self.kinematic_objects: list[KinematicObject] = []
 
         p.setTimeStep(self.time_step, physicsClientId=self.client)
         p.setGravity(0, 0, -9.81, physicsClientId=self.client)
@@ -393,6 +409,140 @@ class QArmSimEnv:
         if return_depth:
             return width, height, bytes(rgba), depth
         return width, height, bytes(rgba)
+
+    def add_kinematic_object(
+        self,
+        mesh_path: str | Path,
+        *,
+        position: Sequence[float] = (0.0, 0.0, 0.0),
+        orientation_euler_deg: Sequence[float] | None = None,
+        orientation_quat_xyzw: Sequence[float] | None = None,
+        scale: float | Sequence[float] = 1.0,
+        rgba: Sequence[float] | None = None,
+        collision_mesh_path: str | Path | None = None,
+        enable_collision: bool = True,
+        mass: float = 0.0,
+        force_convex_for_dynamic: bool = True,
+    ) -> int:
+        """
+        Spawn a static (mass=0) mesh in the scene and return its PyBullet body id.
+
+        Students can pass Euler angles in degrees (roll, pitch, yaw) or a quaternion
+        (x, y, z, w). Collision defaults to the same mesh unless a separate collision
+        mesh is provided or collision is disabled. Set mass>0 to let gravity act on
+        the mesh. If `force_convex_for_dynamic` is True, dynamic bodies will use a
+        convex collision shape (PyBullet ignores concave collision on dynamic bodies).
+        """
+
+        def _coerce_xyz(values: Sequence[float]) -> list[float]:
+            coords = list(values)
+            if len(coords) != 3:
+                raise ValueError(f"Expected a length-3 position, got {coords}")
+            return [float(v) for v in coords]
+
+        mesh = Path(mesh_path).expanduser()
+        if not mesh.exists():
+            raise FileNotFoundError(f"Kinematic mesh not found: {mesh}")
+
+        collision_mesh: Path | None = None
+        if collision_mesh_path is not None:
+            collision_mesh = Path(collision_mesh_path).expanduser()
+            if not collision_mesh.exists():
+                raise FileNotFoundError(f"Collision mesh not found: {collision_mesh}")
+
+        pos_xyz = _coerce_xyz(position)
+        scale_vec = self._as_vec3(scale)
+
+        if orientation_quat_xyzw is not None:
+            quat_vals = list(orientation_quat_xyzw)
+            if len(quat_vals) != 4:
+                raise ValueError(f"Quaternion must have 4 values (x, y, z, w), got {quat_vals}")
+            orientation_xyzw = tuple(float(v) for v in quat_vals)
+        elif orientation_euler_deg is not None:
+            euler_vals = list(orientation_euler_deg)
+            if len(euler_vals) != 3:
+                raise ValueError(f"Euler angles must be length 3 (roll, pitch, yaw), got {euler_vals}")
+            orientation_xyzw = tuple(
+                p.getQuaternionFromEuler([math.radians(float(v)) for v in euler_vals])
+            )  # returns (x, y, z, w)
+        else:
+            orientation_xyzw = (0.0, 0.0, 0.0, 1.0)
+
+        color_rgba: tuple[float, float, float, float] | None = None
+        if rgba is not None:
+            color_vals = list(rgba)
+            if len(color_vals) == 3:
+                color_vals.append(1.0)
+            if len(color_vals) != 4:
+                raise ValueError(f"RGBA must have 3 or 4 values, got {color_vals}")
+            color_rgba = tuple(float(v) for v in color_vals)
+        if color_rgba is None:
+            color_rgba = (0.92, 0.92, 0.92, 1.0)
+
+        mass = max(0.0, float(mass))
+
+        visual_shape = p.createVisualShape(
+            shapeType=p.GEOM_MESH,
+            fileName=str(mesh),
+            meshScale=scale_vec,
+            rgbaColor=color_rgba,
+            specularColor=[0.05, 0.05, 0.05],
+            physicsClientId=self.client,
+        )
+
+        collision_shape = -1
+        used_collision_path: Path | None = None
+        if enable_collision:
+            used_collision_path = collision_mesh or mesh
+            collision_shape = p.createCollisionShape(
+                shapeType=p.GEOM_MESH,
+                fileName=str(used_collision_path),
+                meshScale=scale_vec,
+                flags=(
+                    0
+                    if (mass > 0.0 and force_convex_for_dynamic)
+                    else p.GEOM_FORCE_CONCAVE_TRIMESH
+                ),
+                physicsClientId=self.client,
+            )
+            if collision_shape < 0:
+                raise RuntimeError(f"Failed to create collision shape from {used_collision_path}")
+
+        body_id = p.createMultiBody(
+            baseMass=mass,
+            baseCollisionShapeIndex=collision_shape,
+            baseVisualShapeIndex=visual_shape,
+            basePosition=pos_xyz,
+            baseOrientation=orientation_xyzw,
+            physicsClientId=self.client,
+        )
+        if mass > 0.0:
+            p.changeDynamics(
+                body_id,
+                -1,
+                lateralFriction=0.8,
+                restitution=0.0,
+                rollingFriction=0.001,
+                spinningFriction=0.001,
+                physicsClientId=self.client,
+            )
+        self.kinematic_objects.append(
+            KinematicObject(
+                body_id=body_id,
+                visual_path=mesh,
+                collision_path=used_collision_path,
+                mass=mass,
+                position=tuple(pos_xyz),
+                orientation_xyzw=tuple(orientation_xyzw),
+                scale=tuple(scale_vec),
+                rgba=color_rgba,
+            )
+        )
+        return body_id
+
+    def list_kinematic_objects(self) -> list[KinematicObject]:
+        """Return a shallow copy of the currently spawned kinematic meshes."""
+        return list(self.kinematic_objects)
 
     @staticmethod
     def _as_vec3(scale: float | Sequence[float]) -> list[float]:

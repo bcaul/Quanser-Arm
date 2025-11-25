@@ -35,3 +35,8 @@ and the template can be imported cleanly elsewhere if needed.
 ## Extra info
 
 No CLI flags are needed. Modify the constants at the top of `student_main.py` to change duration, step, or viewer/GUI options.
+
+## Drop a kinematic mesh
+
+- Add entries to `KINEMATIC_OBJECTS` in `student_template/student_main.py` to spawn meshes (mesh path + position + orientation in degrees) while running the joint-space demo. Include `"mass": 0.1` (or any positive value) to let gravity act on the mesh.
+- Run `python -m student_template.student_object` for a copy of `student_main` that focuses on kinematic/dynamic meshes only (no motion loop) and preloads the included `blender_monkey.stl`. Keep `"force_convex_for_dynamic": True` if you give it mass so collisions with the base stay reliable.

@@ -47,7 +47,7 @@ try:
 except ImportError as exc:  # pragma: no cover - runtime guard
     raise SystemExit("Panda3D is not installed. Try `pip install panda3d`.") from exc
 
-from sim.env import QArmSimEnv
+from sim.env import KinematicObject, QArmSimEnv
 from sim.assets import BaseMeshAssets, DEFAULT_BASE_ASSETS
 
 WINDOW_TITLE = "QArm Panda3D Visualizer"
@@ -114,6 +114,10 @@ class PhysicsBridge:
         self.client = self.env.client
         self.robot_id = self.env.robot_id
         self.link_name_to_index = dict(self.env.link_name_to_index)
+        self.kinematic_objects: List[KinematicObject] = (
+            self.env.list_kinematic_objects() if hasattr(self.env, "list_kinematic_objects") else []
+        )
+        self.kinematic_body_nodes: List[Tuple[int, NodePath]] = []
 
         self.joint_order: List[int] = list(self.env.movable_joint_indices)
         self.joint_meta: List[Tuple[int, str, float, float]] = []
@@ -254,12 +258,15 @@ class PandaArmViewer(ShowBase):
         self._last_mouse: Tuple[float, float] | None = None
 
         self.link_nodes: Dict[str, NodePath] = {}
+        self.kinematic_nodes: List[NodePath] = []
+        self.kinematic_body_nodes: List[Tuple[int, NodePath]] = []
         self.joint_sliders: List[DirectSlider] = []
         self.fps_label: DirectLabel | None = None
         self.filters: CommonFilters | None = None
 
         self._setup_scene()
         self._setup_static_meshes()
+        self._setup_kinematic_objects()
         self._setup_models()
         if self.show_sliders:
             self._setup_ui()
@@ -322,12 +329,12 @@ class PandaArmViewer(ShowBase):
         try:
             self.filters = CommonFilters(self.win, self.cam)
             ok = self.filters.setBloom(
-                blend=(0.25, 0.25, 0.25, 0.0),
-                desat=0.2,
-                intensity=2.2,
-                size="large",
-                mintrigger=0.6,
-                maxtrigger=1.0,
+                blend=(0.12, 0.12, 0.12, 0.0),
+                desat=0.1,
+                intensity=1.5,
+                size="medium",
+                mintrigger=0.45,
+                maxtrigger=0.85,
             )
             if not ok:
                 self.filters = None
@@ -335,8 +342,8 @@ class PandaArmViewer(ShowBase):
                 # Add ambient occlusion for extra depth if available.
                 try:
                     self.filters.setAmbientOcclusion(
-                        strength=0.4,
-                        radius=0.35,
+                        strength=0.3,
+                        radius=0.28,
                         min_samples=8,
                         max_samples=16,
                     )
@@ -449,6 +456,14 @@ class PandaArmViewer(ShowBase):
             pos, orn = poses[name]
             node.setPos(pos[0], pos[1], pos[2])
             node.setQuat(LQuaternionf(orn[3], orn[0], orn[1], orn[2]))
+        # Update any spawned kinematic/dynamic meshes.
+        for body_id, node in self.kinematic_body_nodes:
+            try:
+                pos, orn = p.getBasePositionAndOrientation(body_id, physicsClientId=self.physics.client)
+            except Exception:
+                continue
+            node.setPos(pos[0], pos[1], pos[2])
+            node.setQuat(LQuaternionf(orn[3], orn[0], orn[1], orn[2]))
 
     def _update_camera(self) -> None:
         cam_pos = self._spherical_to_cartesian(self.cam_distance, math.radians(self.cam_yaw), math.radians(self.cam_pitch))
@@ -526,6 +541,45 @@ class PandaArmViewer(ShowBase):
                 mat.setShininess(6.0)
                 node.setMaterial(mat, 1)
                 node.setColor(Vec4(1, 1, 1, 1))
+
+    def _setup_kinematic_objects(self) -> None:
+        if not self.physics.kinematic_objects:
+            return
+        for obj in self.physics.kinematic_objects:
+            node = self._load_mesh(obj.visual_path)
+            node.reparentTo(self.render)
+            scale_vec = self._as_vec3(obj.scale)
+            # Try to mirror whatever scale Bullet is using, falling back to the stored value.
+            try:
+                shape_data = p.getVisualShapeData(obj.body_id, -1, physicsClientId=self.physics.client)
+                if shape_data:
+                    dims = shape_data[0][3]
+                    scale_vec = self._as_vec3(dims)
+            except Exception:
+                pass
+            node.setPos(obj.position[0], obj.position[1], obj.position[2])
+            node.setQuat(
+                LQuaternionf(
+                    obj.orientation_xyzw[3],
+                    obj.orientation_xyzw[0],
+                    obj.orientation_xyzw[1],
+                    obj.orientation_xyzw[2],
+                )
+            )
+            node.setScale(scale_vec)
+            node.setTwoSided(True)
+            node.setShaderAuto(True)
+            if obj.rgba:
+                color = Vec4(*obj.rgba)
+                node.setColor(color)
+                mat = Material()
+                mat.setDiffuse(color)
+                mat.setAmbient(color * 0.8)
+                mat.setSpecular(Vec4(0.08, 0.08, 0.08, 1))
+                mat.setShininess(6.0)
+                node.setMaterial(mat, 1)
+            self.kinematic_nodes.append(node)
+            self.kinematic_body_nodes.append((obj.body_id, node))
 
     def _load_mesh(self, path: Path) -> NodePath:
         try:

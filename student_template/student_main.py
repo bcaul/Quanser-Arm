@@ -8,7 +8,8 @@ Quick API reminder (common to sim + hardware):
 
 The sim is meant to be viewed in Panda3D (`python -m sim.panda_viewer`). The PyBullet
 GUI is optional and best used for debugging joint values; this script launches Panda3D
-by default (edit the toggles near the top to change that).
+by default (edit the toggles near the top to change that). Populate KINEMATIC_OBJECTS
+to drop static meshes (position/orientation + mesh path) into the scene.
 
 Run with:
     python -m student_template.student_main                      # opens Panda3D viewer
@@ -20,6 +21,7 @@ from __future__ import annotations
 import threading
 import time
 from types import SimpleNamespace
+from pathlib import Path
 
 from api.factory import make_qarm
 from common.qarm_base import DEFAULT_JOINT_ORDER, QArmBase
@@ -29,6 +31,47 @@ DEFAULT_DURATION_S = 0.0
 DEFAULT_STEP_S = 0.02
 USE_PANDA_VIEWER = True
 USE_PYBULLET_GUI = False
+# Fill this list with entries to drop static meshes into the scene.
+# Example shape of an entry:
+# {
+#     "mesh_path": Path(__file__).parent / "blender_monkey.stl",
+#     "position": (0.2, 0.0, 0.08),
+#     "euler_deg": (0.0, 0.0, 45.0),  # roll, pitch, yaw in degrees
+#     "scale": 0.5,
+#     "mass": 0.1,  # optional: set >0 to let gravity act on the mesh
+# }
+KINEMATIC_OBJECTS: list[dict[str, object]] = []
+
+
+def add_kinematic_objects(arm: QArmBase, objects: list[dict[str, object]]) -> None:
+    """
+    Convenience wrapper around the simulator's kinematic mesh helper.
+    Pass a list of dicts shaped like the KINEMATIC_OBJECTS example above.
+    """
+    if not objects:
+        return
+    env = getattr(arm, "env", None)
+    add_fn = getattr(arm, "add_kinematic_object", None)
+    if add_fn is None and env is not None:
+        add_fn = getattr(env, "add_kinematic_object", None)
+    if add_fn is None:
+        print("[Student] Current QArm backend does not support kinematic objects.")
+        return
+    for obj in objects:
+        kwargs = {
+            "mesh_path": obj["mesh_path"],
+            "position": obj.get("position", (0.0, 0.0, 0.0)),
+            "scale": obj.get("scale", 1.0),
+            "rgba": obj.get("rgba"),
+            "mass": obj.get("mass", 0.0),
+            "force_convex_for_dynamic": obj.get("force_convex_for_dynamic", True),
+        }
+        if "quat_xyzw" in obj:
+            kwargs["orientation_quat_xyzw"] = obj["quat_xyzw"]
+        else:
+            kwargs["orientation_euler_deg"] = obj.get("euler_deg")
+        body_id = add_fn(**kwargs)
+        print(f"[Student] Added kinematic mesh {obj['mesh_path']} (body_id={body_id})")
 
 
 def demo_motion(arm: QArmBase, duration: float, step_s: float, stop_event: threading.Event | None = None) -> None:
@@ -78,6 +121,7 @@ def main() -> None:
     # Build the sim arm; turn on PyBullet's own GUI only if you flip the flag above.
     arm = make_qarm(mode="sim", gui=use_pybullet_gui, real_time=real_time, auto_step=auto_step)
     arm.home()
+    add_kinematic_objects(arm, KINEMATIC_OBJECTS)
     time.sleep(0.1)
 
     # -------- Viewer wiring (optional) --------
