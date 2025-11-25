@@ -190,10 +190,11 @@ class PandaArmViewer(ShowBase):
         self.grid_y_neg_cells = 8
         self.grid_y_pos_cells = 4
 
-        self.cam_target = Vec3(0, 0, 0.05)
-        self.cam_distance = 0.5
-        self.cam_yaw = 45.0
-        self.cam_pitch = -30.0
+        # Default camera: more top-down, looking at the board center.
+        self.cam_target = Vec3(0, 0, 0.02)
+        self.cam_distance = 2.5
+        self.cam_yaw = -65.0
+        self.cam_pitch = 40.0
         self._orbit_drag = False
         self._pan_drag = False
         self._last_mouse: Tuple[float, float] | None = None
