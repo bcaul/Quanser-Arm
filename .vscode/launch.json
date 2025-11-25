@@ -5,30 +5,28 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Actual Sim (PyBullet GUI)",
+      "name": "Student Sandbox (default)",
       "type": "debugpy",
       "request": "launch",
-      "module": "sim.actual_sim",
+      "module": "student_template.student_main",
       "justMyCode": true,
-      "args": [
-        "--real-time"
-      ]
+      "args": []
     },
     {
-      "name": "Quick Run (run_gui)",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "sim.run_gui",
-      "justMyCode": true,
-      "args": ["--gui", "--sliders", "--real-time"]
-    },
-    {
-      "name": "Panda Viewer",
+      "name": "Panda Viewer (Debug)",
       "type": "debugpy",
       "request": "launch",
       "module": "sim.panda_viewer",
       "justMyCode": true,
       "args": []
+    },
+    {
+      "name": "PyBullet GUI (Debug)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "sim.run_gui",
+      "justMyCode": true,
+      "args": ["--gui", "--sliders", "--real-time"]
     }
   ]
 }

@@ -83,10 +83,9 @@ python -m sim.run_gui --gui --real-time --sliders
 ```
 - **Student sandbox (joint-space API):**
   ```bash
-  python -m student_template.student_main               # viewer on (default)
-  python -m student_template.student_main --headless    # no Panda3D window
-  python -m student_template.student_main --pybullet-gui  # PyBullet debug GUI
+  python -m student_template.student_main
   ```
+  (Edit the defaults at the top of `student_template/student_main.py` to change duration, step size, or enable/disable the viewer/PyBullet GUI.)
 
 Base and accent meshes are now hardcoded in `sim/assets.py` (pinebase + collision and green/blue accents) with a shared 0.001 visual/collision scale, so PyBullet and Panda3D stay in sync without passing extra CLI arguments.
 
@@ -101,6 +100,14 @@ Base and accent meshes are now hardcoded in `sim/assets.py` (pinebase + collisio
   // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
   "version": "0.2.0",
   "configurations": [
+    {
+      "name": "Student Sandbox (default)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "student_template.student_main",
+      "justMyCode": true,
+      "args": []
+    },
     {
       "name": "Actual Sim (PyBullet GUI)",
       "type": "debugpy",
@@ -129,4 +136,4 @@ Base and accent meshes are now hardcoded in `sim/assets.py` (pinebase + collisio
 }
 ```
 
-- Launch configs use PyBullet's own GUI and debug sliders. Base meshes and scales are baked into the sim (see `sim/assets.py`), so no extra mesh arguments are required.
+- The first entry launches the student sandbox and is the default in VSCode. Other configs use PyBullet's GUI/debug sliders. Base meshes and scales are baked into the sim (see `sim/assets.py`), so no extra mesh arguments are required.

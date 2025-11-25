@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -36,6 +37,7 @@ try:
         LineSegs,
         NodePath,
         TextNode,
+        WindowProperties,
         Vec3,
         Vec4,
         Material,
@@ -47,6 +49,31 @@ except ImportError as exc:  # pragma: no cover - runtime guard
 
 from sim.env import QArmSimEnv
 from sim.assets import BaseMeshAssets, DEFAULT_BASE_ASSETS
+
+WINDOW_TITLE = "QArm Panda3D Visualizer"
+ICON_DIR = Path(__file__).resolve().parent / "icons"
+ICON_PNG = ICON_DIR / "icon.png"
+ICON_ICO = ICON_DIR / "icon.ico"
+ICON_ICNS = ICON_DIR / "icon.icns"
+ICON_MAC_APPICON = ICON_DIR / "AppIcon.appiconset" / "512-mac.png"
+# Optional: point this to an .ico (Windows) or .icns/.png (macOS/Linux) to override the icon.
+CUSTOM_ICON_PATH: Path | None = None
+
+
+def _select_icon_path() -> Path | None:
+    """Pick a platform-appropriate icon if available."""
+    if CUSTOM_ICON_PATH and Path(CUSTOM_ICON_PATH).exists():
+        return Path(CUSTOM_ICON_PATH)
+    if sys.platform.startswith("win") and ICON_ICO.exists():
+        return ICON_ICO
+    if sys.platform == "darwin":
+        if ICON_MAC_APPICON.exists():
+            return ICON_MAC_APPICON
+        if ICON_ICNS.exists():
+            return ICON_ICNS
+    if ICON_PNG.exists():
+        return ICON_PNG
+    return None
 
 
 class PhysicsBridge:
@@ -186,6 +213,14 @@ class PandaArmViewer(ShowBase):
 
     def __init__(self, physics: PhysicsBridge, args: argparse.Namespace) -> None:
         super().__init__()
+        # Brand the window title (and icon if you supply one).
+        wp = WindowProperties()
+        wp.setTitle(WINDOW_TITLE)
+        icon_path = _select_icon_path()
+        if icon_path:
+            wp.setIconFilename(str(icon_path))
+        self.win.requestProperties(wp)
+
         self.disableMouse()
         self.render.setShaderAuto()
         self.render.setAntialias(AntialiasAttrib.MMultisample)
@@ -199,6 +234,7 @@ class PandaArmViewer(ShowBase):
         self.blue_accent_path = self.base_assets.blue_accent_mesh
         self.show_base = not args.hide_base
         self.show_accents = not args.hide_accents
+        self.show_sliders = getattr(args, "show_sliders", False)
         self.base_yaw_deg = self.base_assets.yaw_deg
         self.base_mesh_scale = self.base_assets.visual_scale
         # Grid sizing (edit here if you want different spans).
@@ -225,7 +261,8 @@ class PandaArmViewer(ShowBase):
         self._setup_scene()
         self._setup_static_meshes()
         self._setup_models()
-        self._setup_ui()
+        if self.show_sliders:
+            self._setup_ui()
         self._bind_controls()
 
         self.taskMgr.add(self._update_task, "update-task")
@@ -257,8 +294,6 @@ class PandaArmViewer(ShowBase):
         fill_np.setHpr(60, -10, 0)
         self.render.setLight(fill_np)
 
-        # Emissive geometry to visualize light sources.
-        self._add_light_markers()
         self._setup_postprocess()
 
         # Optional subtle horizon tint via a translucent card.
@@ -278,28 +313,6 @@ class PandaArmViewer(ShowBase):
 
         self._create_grid()
         self._update_camera()
-
-    def _add_light_markers(self) -> None:
-        """Add small emissive cubes to visualize light sources in the scene."""
-        try:
-            marker_model = self.loader.loadModel("models/box")
-        except Exception:
-            return
-
-        markers = [
-            {"pos": Vec3(-1.2, 2.0, 1.6), "color": Vec4(1.0, 1.0, 1.0, 1.0), "tint": Vec4(1.1, 1.05, 1.0, 1.0), "scale": 0.08},
-            {"pos": Vec3(1.4, -2.0, 1.2), "color": Vec4(1.0, 1.0, 1.0, 1.0), "tint": Vec4(0.6, 0.9, 1.6, 1.0), "scale": 0.06},
-        ]
-        for cfg in markers:
-            cube = marker_model.copyTo(self.render)
-            cube.setPos(cfg["pos"])
-            cube.setScale(cfg["scale"])
-            # Base white emissive look with a subtle color tint for bloom.
-            cube.setColor(cfg["color"])
-            cube.setColorScale(cfg.get("tint", cfg["color"]) * 8.0)
-            cube.setLightOff()
-            cube.setShaderAuto(False)
-            cube.setTransparency(TransparencyAttrib.MAlpha)
 
     def _setup_postprocess(self) -> None:
         """Enable a light bloom to make emissive markers pop."""

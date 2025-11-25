@@ -11,6 +11,7 @@ python -m student_template.student_main
 
 This launches the simulation and opens the Panda3D viewer (Panda3D comes from `pip install -e .`).
 Close the viewer window or press Ctrl+C to stop.
+Edit the defaults near the top of `student_main.py` if you want a longer run, different step size, or to disable the viewer / enable the PyBullet GUI.
 
 ## What you just ran
 
@@ -33,6 +34,4 @@ and the template can be imported cleanly elsewhere if needed.
 
 ## Extra info
 
-- Run longer or forever: `python -m student_template.student_main --duration 0`
-- Hide the viewer: `python -m student_template.student_main --headless`
-- Debug with PyBullet sliders/GUI: `python -m student_template.student_main --pybullet-gui`
+No CLI flags are needed. Modify the constants at the top of `student_main.py` to change duration, step, or viewer/GUI options.
