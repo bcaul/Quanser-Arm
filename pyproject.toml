@@ -22,6 +22,10 @@ include = [
     "sim.*",
     "hardware",
     "hardware.*",
+    "api",
+    "api.*",
+    "student_template",
+    "student_template.*",
     "examples",
     "examples.*",
 ]

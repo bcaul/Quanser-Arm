@@ -1,14 +1,15 @@
 """
 Lightweight PyBullet environment wrapper for the QArm simulation.
 
-This sets up a physics client, loads the URDF, captures joint metadata, and
-offers helpers for stepping and basic joint control. Keep the joint ordering
-consistent with the URDF:
+PyBullet provides the physics; Panda3D (see :mod:`sim.panda_viewer`) is the
+primary viewport. The PyBullet GUI can be enabled for debugging but defaults
+to headless usage. Keep the joint ordering consistent with the URDF:
 - 0: world_base_joint (fixed, not driven)
 - 1: YAW
 - 2: SHOULDER
 - 3: ELBOW
 - 4: WRIST
+- URDF expected at ``sim/qarm/urdf/QARM.urdf`` by default.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ class QArmSimEnv:
 
     Minimal responsibilities:
     - start a PyBullet client (GUI or DIRECT),
-    - load the QArm URDF from qarm/urdf,
+    - load the QArm URDF from sim/qarm/urdf,
     - record joint indices/names and expose controllable joints,
     - provide reset/step and joint position helpers.
     """
@@ -118,7 +119,7 @@ class QArmSimEnv:
         elif add_ground:
             self.floor_id = self._create_floor(enable_collision=True)
 
-        urdf_path = urdf_path or Path(__file__).resolve().parent.parent / "qarm" / "urdf" / "QARM.urdf"
+        urdf_path = urdf_path or Path(__file__).resolve().parent / "qarm" / "urdf" / "QARM.urdf"
         if not urdf_path.exists():
             raise FileNotFoundError(f"URDF not found at {urdf_path}")
 

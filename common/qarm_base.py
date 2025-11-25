@@ -4,6 +4,8 @@ Base interface for controlling the Quanser QArm in joint space.
 Conventions:
 - Joint order must be fixed and consistent between simulation and hardware
   implementations; document the chosen order when wiring up a concrete class.
+- The default joint naming/ordering used across this repo is:
+  ("yaw", "shoulder", "elbow", "wrist")
 - All joint angles are expressed in radians.
 - Students are expected to build their own forward and inverse kinematics on
   top of the joint-level commands defined here.
@@ -13,6 +15,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Sequence
+
+
+DEFAULT_JOINT_ORDER: tuple[str, ...] = ("yaw", "shoulder", "elbow", "wrist")
 
 
 class QArmBase(ABC):

@@ -41,7 +41,7 @@ def main() -> None:
     parser.add_argument(
         "--urdf",
         type=Path,
-        default=Path(__file__).resolve().parent.parent / "qarm" / "urdf" / "QARM.urdf",
+        default=Path(__file__).resolve().parent / "qarm" / "urdf" / "QARM.urdf",
         help="Path to the QArm URDF.",
     )
     args = parser.parse_args()

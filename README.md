@@ -9,17 +9,12 @@ for picking and placing coloured hoops onto stands.
 
 ## Current status
 
-- `qarm/` contains the URDF and mesh resources for the QArm.
-- `common.QArmBase` defines a joint-space control interface.
-- `sim.SimQArm` and `hardware.RealQArm` are skeleton implementations that will
-  be wired to PyBullet and the Quanser API respectively.
-
-Next steps (to be done by a human):
-
-- Implement the PyBullet environment in `sim/env.py`.
-- Connect `SimQArm` to the PyBullet simulation.
-- Connect `RealQArm` to the physical QArm via the Quanser Python SDK.
-- Build student-facing templates and milestone scripts on top of `QArmBase`.
+- `sim/qarm/` contains the URDF and mesh resources for the QArm.
+- `common.QArmBase` defines the joint-space API and default joint ordering.
+- `sim.env.QArmSimEnv` runs the PyBullet backend; `sim.SimQArm` wraps it to match `QArmBase`.
+- `api.make_qarm` switches between simulation (default, headless) and the stubbed `hardware.RealQArm`.
+- `student_template/` holds a runnable joint-control sandbox for teams.
+- `hardware.RealQArm` remains a stub until the Quanser SDK is available.
 
 ## Local setup (for devs and students)
 
@@ -54,27 +49,31 @@ Quick smoke test (no GUI):
 python - <<'PY'
 import pybullet as p
 cid = p.connect(p.DIRECT)
-robot = p.loadURDF("qarm/urdf/QARM.urdf")
+robot = p.loadURDF("sim/qarm/urdf/QARM.urdf")
 print("client:", cid, "robot:", robot)
 p.disconnect()
 PY
 ```
 
-## Running the sims (PyBullet GUI)
+## Running the sims (Panda3D-first, PyBullet for debug)
 
-- **Actual sim (full arm, optional gripper):**
+- **Panda3D viewport (recommended for visuals):**
   ```bash
-  python -m sim.actual_sim --real-time            # arm only (PyBullet sliders)
-  python -m sim.actual_sim --real-time --attach-gripper            # attach default gripper
-  python -m sim.actual_sim --real-time --attach-gripper --new-gripper  # attach new gripper package
+  python -m sim.panda_viewer
   ```
-- **Test sim (gripper-focused):**
+  (Requires `panda3d` installed; included in `pip install -e .`.)
+- **PyBullet debug sliders / GUI (useful for quick joint pokes):**
   ```bash
-  python -m sim.test_sim --real-time              # gripper-only by default (PyBullet sliders)
-  python -m sim.test_sim --real-time --with-arm   # include arm + gripper
-  python -m sim.test_sim --real-time --with-arm --new-gripper  # include new gripper package
+  python -m sim.actual_sim --real-time
+  python -m sim.run_gui --gui --real-time --sliders
   ```
-- Use `--gripper-urdf PATH` in either launch to point at a URDF you're editing. `--light-mode` switches PyBullet to a light background.
+- **Student sandbox (joint-space API, Panda3D by default):**
+  ```bash
+  python -m student_template.student_main                         # opens Panda3D viewport (default)
+  python -m student_template.student_main --headless              # run without Panda3D
+  python -m student_template.student_main --pybullet-gui          # debug GUI if needed
+  python -m student_template.student_main --pybullet-gui --headless  # debug GUI only
+  ```
 
 ### VSCode run/debug helpers
 
@@ -96,12 +95,34 @@ PY
       "args": ["--real-time"]
     },
     {
-      "name": "Test Sim (PyBullet GUI)",
+      "name": "Quick Run (run_gui)",
       "type": "debugpy",
       "request": "launch",
-      "module": "sim.test_sim",
+      "module": "sim.run_gui",
       "justMyCode": true,
-      "args": ["--real-time"]
+      "args": ["--gui", "--sliders", "--real-time"]
+    },
+    {
+      "name": "Panda Viewer",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "sim.panda_viewer",
+      "justMyCode": true,
+      "args": [
+        "--base-mesh",
+        "sim/models/pinebase.stl",
+        "--base-collision-mesh",
+        "sim/models/pinebase_collision.stl",
+        "--base-scale",
+        "0.001",
+        "--base-yaw",
+        "180",
+        "--base-friction",
+        "0.8",
+        "--base-restitution",
+        "0.0",
+        "--probe-base-collision"
+      ]
     }
   ]
 }

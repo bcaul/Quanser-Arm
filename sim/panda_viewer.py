@@ -46,7 +46,12 @@ from sim.env import QArmSimEnv
 
 
 class PhysicsBridge:
-    """Thin wrapper around QArmSimEnv for stepping and reading link poses."""
+    """
+    Thin wrapper around QArmSimEnv for stepping and reading link poses.
+
+    Can either create its own environment (default) or attach to an existing
+    one, which is useful when embedding the viewer inside another script.
+    """
 
     def __init__(
         self,
@@ -57,20 +62,29 @@ class PhysicsBridge:
         base_yaw_deg: float,
         base_friction: float,
         base_restitution: float,
+        env: QArmSimEnv | None = None,
+        reset: bool = True,
     ) -> None:
-        self.env = QArmSimEnv(
-            gui=False,
-            add_ground=base_mesh is None,
-            enable_joint_sliders=False,
-            time_step=time_step,
-            base_mesh_path=base_mesh,
-            base_collision_mesh_path=base_collision_mesh,
-            base_mesh_scale=base_mesh_scale,
-            base_yaw_deg=base_yaw_deg,
-            base_friction=base_friction,
-            base_restitution=base_restitution,
-        )
-        self.env.reset()
+        if env is None:
+            self.env = QArmSimEnv(
+                gui=False,
+                add_ground=base_mesh is None,
+                enable_joint_sliders=False,
+                time_step=time_step,
+                base_mesh_path=base_mesh,
+                base_collision_mesh_path=base_collision_mesh,
+                base_mesh_scale=base_mesh_scale,
+                base_yaw_deg=base_yaw_deg,
+                base_friction=base_friction,
+                base_restitution=base_restitution,
+            )
+            if reset:
+                self.env.reset()
+        else:
+            self.env = env
+            if reset:
+                self.env.reset()
+
         self.client = self.env.client
         self.robot_id = self.env.robot_id
         self.link_name_to_index = dict(self.env.link_name_to_index)
@@ -249,7 +263,7 @@ class PandaArmViewer(ShowBase):
         self._update_camera()
 
     def _setup_models(self) -> None:
-        mesh_dir = Path(__file__).resolve().parent.parent / "qarm" / "meshes"
+        mesh_dir = Path(__file__).resolve().parent / "qarm" / "meshes"
         mesh_map: Dict[str, List[Path]] = {
             "base_link": [mesh_dir / "base_link.STL"],
             "YAW": [mesh_dir / "YAW.STL"],

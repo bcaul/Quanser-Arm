@@ -2,7 +2,7 @@
 
 URDF (Unified Robot Description Format) is the XML-based format PyBullet, ROS, and similar tools use to describe robot kinematics, visuals, and physical properties. This repository includes two relevant URDF packages:
 
-- `qarm/urdf/QARM.urdf` – the arm itself.
+- `sim/qarm/urdf/QARM.urdf` – the arm itself.
 - `qarm_gripper/urdf/qarm_gripper.urdf` – the gripper assembly that can be loaded separately or attached to the arm.
 
 You can learn the structure by inspecting the gripper URDF, which demonstrates each URDF element in a compact package.
@@ -66,10 +66,10 @@ This specifies a revolute joint whose pivot sits at the given origin relative to
 
 ## Practical tips
 
-- **Reuse packages**: Keep arm and gripper URDFs separate if you expect to swap variants. In this project the standalone gripper mesh (`Gripper.stl`) is mounted directly on the arm's END-EFFECTOR in `qarm/urdf/QARM.urdf` for simplicity.
+- **Reuse packages**: Keep arm and gripper URDFs separate if you expect to swap variants. In this project the standalone gripper mesh (`Gripper.stl`) is mounted directly on the arm's END-EFFECTOR in `sim/qarm/urdf/QARM.urdf` for simplicity.
 - **Consistent origins**: Align `<visual>` and `<collision>` origins with `<inertial>` where possible to avoid mesh offsets from third-party CAD exports.
 - **Unit conventions**: URDF assumes metres and radians. If the CAD export used millimetres, apply `scale="0.001 0.001 0.001"` on the `<mesh>` or re-export in metres.
-- **Debugging**: Load the URDF standalone (`python -m sim.bootstrap --urdf qarm/urdf/QARM.urdf --gui`) to verify joint axes and ranges before driving it.
+- **Debugging**: Load the URDF standalone (`python -m sim.bootstrap --urdf sim/qarm/urdf/QARM.urdf --gui`) to verify joint axes and ranges before driving it.
 - **Live editing**: Use `python -m sim.run_gui --gui --sliders` to load the arm in PyBullet with debug sliders while you tweak URDF visuals.
 
 For additional references, see:

@@ -7,9 +7,9 @@ the hardware SDK is available in the hackathon environment.
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Any, Sequence
 
-from common.qarm_base import QArmBase
+from common.qarm_base import DEFAULT_JOINT_ORDER, QArmBase
 
 
 class RealQArm(QArmBase):
@@ -21,29 +21,29 @@ class RealQArm(QArmBase):
     should be added.
     """
 
-    def __init__(self) -> None:
-        # TODO: establish connection to QArm via Quanser API.
-        # e.g. self.client = quanser_sdk.connect(...)
-        raise NotImplementedError(
-            "RealQArm __init__ to be implemented when hardware API is available"
-        )
+    def __init__(self, client: Any | None = None) -> None:
+        # Placeholder for the Quanser hardware connection. Keep this import-free
+        # so the package is importable without the vendor SDK present.
+        self.client = client
+        self.joint_name_hint: tuple[str, ...] = DEFAULT_JOINT_ORDER
 
     def home(self) -> None:
-        # TODO: send joints to a predefined safe home configuration.
-        raise NotImplementedError
+        self._not_ready("home")
 
     def set_joint_positions(self, q: Sequence[float]) -> None:
-        # TODO: send desired joint positions to hardware.
-        raise NotImplementedError
+        self._not_ready("set_joint_positions")
 
     def get_joint_positions(self) -> list[float]:
-        # TODO: query actual joint positions from hardware.
-        raise NotImplementedError
+        self._not_ready("get_joint_positions")
 
     def open_gripper(self) -> None:
-        # TODO: open gripper via hardware command.
-        raise NotImplementedError
+        self._not_ready("open_gripper")
 
     def close_gripper(self) -> None:
-        # TODO: close gripper via hardware command.
-        raise NotImplementedError
+        self._not_ready("close_gripper")
+
+    def _not_ready(self, call: str) -> None:
+        raise NotImplementedError(
+            f"RealQArm.{call} requires the Quanser hardware SDK and a connected robot. "
+            "Use mode='sim' during the hackathon, or supply a hardware client when available."
+        )
