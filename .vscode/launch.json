@@ -11,17 +11,7 @@
       "module": "sim.actual_sim",
       "justMyCode": true,
       "args": [
-        "--real-time",
-        "--base-mesh",
-        "sim/models/pinebase.stl",
-        "--base-collision-mesh",
-        "sim/models/pinebase_collision.stl",
-        "--base-scale",
-        "1.0",
-        "--base-friction",
-        "0.8",
-        "--base-restitution",
-        "0.0"
+        "--real-time"
       ]
     },
     {
@@ -38,14 +28,7 @@
       "request": "launch",
       "module": "sim.panda_viewer",
       "justMyCode": true,
-      "args": [
-        "--base-mesh",
-        "sim/models/pinebase.stl",
-        "--base-collision-mesh",
-        "sim/models/pinebase_collision.stl",
-        "--base-scale",
-        "1.0"
-      ]
+      "args": []
     }
   ]
 }

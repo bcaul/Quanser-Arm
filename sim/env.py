@@ -23,6 +23,8 @@ try:
 except ImportError as exc:  # pragma: no cover - runtime guard
     raise SystemExit("pybullet is not installed. Run `pip install -e .` first.") from exc
 
+from sim.assets import BaseMeshAssets, DEFAULT_BASE_ASSETS
+
 
 class QArmSimEnv:
     """
@@ -47,18 +49,14 @@ class QArmSimEnv:
         gui: bool = False,
         urdf_path: Path | None = None,
         time_step: float = 1.0 / 120.0,
-        add_ground: bool = False,
+        add_ground: bool = True,
+        use_mesh_floor: bool = True,
+        base_assets: BaseMeshAssets | None = DEFAULT_BASE_ASSETS,
         real_time: bool = False,
         dark_mode: bool = True,
         show_debug_gui: bool = False,
         show_camera_previews: bool = False,
         enable_joint_sliders: bool = False,
-        base_mesh_path: Path | None = None,
-        base_collision_mesh_path: Path | None = None,
-        base_mesh_scale: float | Sequence[float] = 1.0,
-        base_friction: float = 0.8,
-        base_restitution: float = 0.0,
-        base_yaw_deg: float = 180.0,
     ) -> None:
         mode = p.GUI if gui else p.DIRECT
         connect_options = ""
@@ -91,27 +89,38 @@ class QArmSimEnv:
         if self.gui_enabled:
             self._configure_gui()
 
-        self.base_mesh_path = Path(base_mesh_path) if base_mesh_path else None
-        self.base_collision_mesh_path = Path(base_collision_mesh_path) if base_collision_mesh_path else None
-        self.base_mesh_scale = base_mesh_scale
-        self.base_friction = float(base_friction)
-        self.base_restitution = float(base_restitution)
-        self.base_yaw_deg = float(base_yaw_deg)
+        self.base_assets = base_assets or DEFAULT_BASE_ASSETS
+        self.use_mesh_floor = bool(use_mesh_floor)
+        self.base_mesh_path: Path | None = None
+        self.base_collision_mesh_path: Path | None = None
+        self.base_mesh_scale: float | Sequence[float] | None = None
+        self.base_collision_mesh_scale: float | Sequence[float] | None = None
+        self.base_friction: float = 0.0
+        self.base_restitution: float = 0.0
+        self.base_yaw_deg: float = 0.0
 
-        if self.base_mesh_path is not None:
-            collision_path = self.base_collision_mesh_path or self.base_mesh_path
+        if add_ground and self.use_mesh_floor:
+            self.base_mesh_path = Path(self.base_assets.visual_mesh)
+            self.base_collision_mesh_path = Path(self.base_assets.collision_mesh)
+            self.base_mesh_scale = self.base_assets.visual_scale
+            self.base_collision_mesh_scale = self.base_assets.collision_scale
+            self.base_friction = float(self.base_assets.friction)
+            self.base_restitution = float(self.base_assets.restitution)
+            self.base_yaw_deg = float(self.base_assets.yaw_deg)
             print(
                 "[QArmSimEnv] Using mesh floor:",
                 f"visual={self.base_mesh_path}",
-                f"collision={collision_path}",
-                f"scale={self.base_mesh_scale}",
+                f"collision={self.base_collision_mesh_path}",
+                f"visual_scale={self.base_mesh_scale}",
+                f"collision_scale={self.base_collision_mesh_scale}",
                 f"friction={self.base_friction}",
                 f"restitution={self.base_restitution}",
             )
             self.floor_id = self._create_mesh_floor(
                 visual_path=self.base_mesh_path,
-                collision_path=collision_path,
-                mesh_scale=self.base_mesh_scale,
+                collision_path=self.base_collision_mesh_path,
+                visual_scale=self.base_mesh_scale,
+                collision_scale=self.base_collision_mesh_scale,
                 friction=self.base_friction,
                 restitution=self.base_restitution,
                 yaw_deg=self.base_yaw_deg,
@@ -234,6 +243,7 @@ class QArmSimEnv:
                 startValue=0.0,
             )
             self._joint_slider_ids.append(slider_id)
+
     def _create_floor(self, enable_collision: bool) -> int:
         """Create a translucent base plane to provide spatial reference."""
         base_collision = (
@@ -260,13 +270,15 @@ class QArmSimEnv:
         self,
         visual_path: Path,
         collision_path: Path,
-        mesh_scale: float | Sequence[float],
+        visual_scale: float | Sequence[float],
+        collision_scale: float | Sequence[float],
         friction: float,
         restitution: float,
         yaw_deg: float,
     ) -> int:
         """Create a static mesh floor that matches the Panda3D base model."""
-        scale_vec = self._as_vec3(mesh_scale)
+        visual_scale_vec = self._as_vec3(visual_scale)
+        collision_scale_vec = self._as_vec3(collision_scale)
         if not visual_path.exists():
             raise FileNotFoundError(f"Base visual mesh not found: {visual_path}")
         if not collision_path.exists():
@@ -275,7 +287,7 @@ class QArmSimEnv:
         visual_shape = p.createVisualShape(
             shapeType=p.GEOM_MESH,
             fileName=str(visual_path),
-            meshScale=scale_vec,
+            meshScale=visual_scale_vec,
             rgbaColor=(0.82, 0.72, 0.55, 1.0),  # pine-like tint
             specularColor=[0.08, 0.08, 0.08],
             physicsClientId=self.client,
@@ -283,7 +295,7 @@ class QArmSimEnv:
         collision_shape = p.createCollisionShape(
             shapeType=p.GEOM_MESH,
             fileName=str(collision_path),
-            meshScale=scale_vec,
+            meshScale=collision_scale_vec,
             flags=p.GEOM_FORCE_CONCAVE_TRIMESH,
             physicsClientId=self.client,
         )

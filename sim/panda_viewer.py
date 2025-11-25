@@ -46,6 +46,7 @@ except ImportError as exc:  # pragma: no cover - runtime guard
     raise SystemExit("Panda3D is not installed. Try `pip install panda3d`.") from exc
 
 from sim.env import QArmSimEnv
+from sim.assets import BaseMeshAssets, DEFAULT_BASE_ASSETS
 
 
 class PhysicsBridge:
@@ -59,36 +60,30 @@ class PhysicsBridge:
     def __init__(
         self,
         time_step: float,
-        base_mesh: Path | None,
-        base_collision_mesh: Path | None,
-        base_mesh_scale: float | List[float],
-        base_yaw_deg: float,
-        base_friction: float,
-        base_restitution: float,
+        base_assets: BaseMeshAssets = DEFAULT_BASE_ASSETS,
         env: QArmSimEnv | None = None,
         reset: bool = True,
     ) -> None:
+        self.base_assets = base_assets or DEFAULT_BASE_ASSETS
         if env is None:
             self.env = QArmSimEnv(
                 gui=False,
-                add_ground=base_mesh is None,
+                add_ground=True,
                 enable_joint_sliders=False,
                 time_step=time_step,
-                base_mesh_path=base_mesh,
-                base_collision_mesh_path=base_collision_mesh,
-                base_mesh_scale=base_mesh_scale,
-                base_yaw_deg=base_yaw_deg,
-                base_friction=base_friction,
-                base_restitution=base_restitution,
+                use_mesh_floor=True,
+                base_assets=self.base_assets,
             )
             if reset:
                 self.env.reset()
         else:
             self.env = env
+            self.base_assets = getattr(self.env, "base_assets", self.base_assets)
             if reset:
                 self.env.reset()
 
-        self.base_mesh_scale = base_mesh_scale
+        self.base_mesh_scale = self.base_assets.visual_scale
+        self.base_collision_mesh_scale = self.base_assets.collision_scale
         self.client = self.env.client
         self.robot_id = self.env.robot_id
         self.link_name_to_index = dict(self.env.link_name_to_index)
@@ -198,13 +193,14 @@ class PandaArmViewer(ShowBase):
         self.physics = physics
         self.paused = False
         self.time_step = args.time_step
-        self.base_mesh_path = self._resolve_path(args.base_mesh)
-        self.green_accent_path = self._resolve_path(args.green_accent)
-        self.blue_accent_path = self._resolve_path(args.blue_accent)
+        self.base_assets = getattr(self.physics, "base_assets", DEFAULT_BASE_ASSETS)
+        self.base_mesh_path = self.base_assets.visual_mesh
+        self.green_accent_path = self.base_assets.green_accent_mesh
+        self.blue_accent_path = self.base_assets.blue_accent_mesh
         self.show_base = not args.hide_base
         self.show_accents = not args.hide_accents
-        self.base_yaw_deg = args.base_yaw
-        self.base_mesh_scale = getattr(args, "base_scale", getattr(physics, "base_mesh_scale", 1.0))
+        self.base_yaw_deg = self.base_assets.yaw_deg
+        self.base_mesh_scale = self.base_assets.visual_scale
         # Grid sizing (edit here if you want different spans).
         self.grid_step = 0.1
         self.grid_x_neg_cells = 4
@@ -626,13 +622,6 @@ class PandaArmViewer(ShowBase):
         z = radius * math.sin(pitch)
         return Vec3(x, y, z)
 
-    @staticmethod
-    def _resolve_path(value: str | None) -> Path | None:
-        """Return an absolute Path or None for empty values."""
-        if not value:
-            return None
-        return Path(value).expanduser().resolve()
-
 
 def frange(start: float, stop: float, step: float):
     val = start
@@ -644,20 +633,6 @@ def frange(start: float, stop: float, step: float):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Panda3D viewer for the QArm with PyBullet physics.")
     parser.add_argument("--time-step", type=float, default=1.0 / 120.0, help="Physics timestep (seconds).")
-    parser.add_argument("--base-mesh", type=str, default=None, help="Path to pine base mesh (visual).")
-    parser.add_argument("--base-collision-mesh", type=str, default=None, help="Path to collision mesh for the base.")
-    parser.add_argument(
-        "--base-scale",
-        type=float,
-        nargs="+",
-        default=[1.0],
-        help="Uniform or XYZ scale for the base mesh (one value or three values).",
-    )
-    parser.add_argument("--base-yaw", type=float, default=180.0, help="Rotation (degrees about Z) to apply to the base.")
-    parser.add_argument("--base-friction", type=float, default=0.8, help="Lateral friction for the base collision.")
-    parser.add_argument("--base-restitution", type=float, default=0.0, help="Restitution (bounciness) for the base.")
-    parser.add_argument("--green-accent", type=str, default=None, help="Path to green accent mesh (visual).")
-    parser.add_argument("--blue-accent", type=str, default=None, help="Path to blue accent mesh (visual).")
     parser.add_argument("--hide-base", action="store_true", help="Do not load the pine base mesh.")
     parser.add_argument("--hide-accents", action="store_true", help="Do not load the accent meshes.")
     parser.add_argument(
@@ -670,45 +645,17 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    models_dir = Path(__file__).resolve().parent / "models"
-    default_base = models_dir / "pinebase.stl"
-    default_base_collision = models_dir / "pinebase_collision.stl"
-    scale_arg = args.base_scale
-    if len(scale_arg) == 1:
-        base_scale: float | List[float] = scale_arg[0]
-    elif len(scale_arg) == 3:
-        base_scale = scale_arg
-    else:
-        raise SystemExit("Base scale must be one value (uniform) or three values (XYZ).")
-
-    if args.base_mesh:
-        base_mesh_path = Path(args.base_mesh).expanduser().resolve()
-    elif not args.hide_base and default_base.exists():
-        base_mesh_path = default_base
-    else:
-        base_mesh_path = None
-
-    if args.base_collision_mesh:
-        base_collision_path = Path(args.base_collision_mesh).expanduser().resolve()
-    elif base_mesh_path and default_base_collision.exists():
-        base_collision_path = default_base_collision
-    else:
-        base_collision_path = base_mesh_path
-
+    base_assets = DEFAULT_BASE_ASSETS
     # Log the chosen assets so it's obvious which collision is active.
-    print("[PandaViewer] base visual mesh:", base_mesh_path)
-    print("[PandaViewer] base collision mesh:", base_collision_path)
-    print("[PandaViewer] base scale:", base_scale)
-    print("[PandaViewer] base yaw:", args.base_yaw)
-    print("[PandaViewer] base friction/restitution:", args.base_friction, args.base_restitution)
+    print("[PandaViewer] base visual mesh:", base_assets.visual_mesh)
+    print("[PandaViewer] base collision mesh:", base_assets.collision_mesh)
+    print("[PandaViewer] base visual scale:", base_assets.visual_scale)
+    print("[PandaViewer] base collision scale:", base_assets.collision_scale)
+    print("[PandaViewer] base yaw:", base_assets.yaw_deg)
+    print("[PandaViewer] base friction/restitution:", base_assets.friction, base_assets.restitution)
     physics = PhysicsBridge(
         time_step=args.time_step,
-        base_mesh=base_mesh_path,
-        base_collision_mesh=base_collision_path,
-        base_mesh_scale=base_scale,
-        base_yaw_deg=args.base_yaw,
-        base_friction=args.base_friction,
-        base_restitution=args.base_restitution,
+        base_assets=base_assets,
     )
     if args.probe_base_collision:
         physics.probe_base_collision()

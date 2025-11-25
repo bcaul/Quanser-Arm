@@ -88,6 +88,8 @@ python -m sim.run_gui --gui --real-time --sliders
   python -m student_template.student_main --pybullet-gui  # PyBullet debug GUI
   ```
 
+Base and accent meshes are now hardcoded in `sim/assets.py` (pinebase + collision and green/blue accents) with a shared 0.001 visual/collision scale, so PyBullet and Panda3D stay in sync without passing extra CLI arguments.
+
 ### VSCode run/debug helpers
 
 - The repo tracks `.vscode/launch.json` so you get the launch targets on clone. The file contents:
@@ -121,24 +123,10 @@ python -m sim.run_gui --gui --real-time --sliders
       "request": "launch",
       "module": "sim.panda_viewer",
       "justMyCode": true,
-      "args": [
-        "--base-mesh",
-        "sim/models/pinebase.stl",
-        "--base-collision-mesh",
-        "sim/models/pinebase_collision.stl",
-        "--base-scale",
-        "0.001",
-        "--base-yaw",
-        "180",
-        "--base-friction",
-        "0.8",
-        "--base-restitution",
-        "0.0",
-        "--probe-base-collision"
-      ]
+      "args": []
     }
   ]
 }
 ```
 
-- Launch configs use PyBullet's own GUI and debug sliders. `--real-time` is pre-wired; add more args as needed.
+- Launch configs use PyBullet's own GUI and debug sliders. Base meshes and scales are baked into the sim (see `sim/assets.py`), so no extra mesh arguments are required.

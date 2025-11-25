@@ -108,26 +108,12 @@ def main() -> None:
 
         viewer_args = SimpleNamespace(
             time_step=arm.env.time_step,
-            base_mesh=None,
-            base_collision_mesh=None,
-            base_mesh_scale=1.0,
-            base_yaw=180.0,
-            base_friction=0.8,
-            base_restitution=0.0,
-            green_accent=None,
-            blue_accent=None,
             hide_base=False,
             hide_accents=False,
             probe_base_collision=False,
         )
         physics = PhysicsBridge(
             time_step=arm.env.time_step,
-            base_mesh=None,
-            base_collision_mesh=None,
-            base_mesh_scale=1.0,
-            base_yaw_deg=180.0,
-            base_friction=0.8,
-            base_restitution=0.0,
             env=getattr(arm, "env", None),
             reset=False,
         )
