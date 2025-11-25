@@ -25,6 +25,7 @@ except ImportError as exc:  # pragma: no cover - runtime guard
     raise SystemExit("pybullet is not installed. Run `pip install -e .`.") from exc
 
 try:
+    from direct.filter.CommonFilters import CommonFilters
     from direct.gui.DirectGui import DirectLabel, DirectSlider
     from direct.showbase.ShowBase import ShowBase
     from panda3d.core import (
@@ -38,6 +39,8 @@ try:
         Vec3,
         Vec4,
         Material,
+        TransparencyAttrib,
+        AntialiasAttrib,
     )
 except ImportError as exc:  # pragma: no cover - runtime guard
     raise SystemExit("Panda3D is not installed. Try `pip install panda3d`.") from exc
@@ -85,6 +88,7 @@ class PhysicsBridge:
             if reset:
                 self.env.reset()
 
+        self.base_mesh_scale = base_mesh_scale
         self.client = self.env.client
         self.robot_id = self.env.robot_id
         self.link_name_to_index = dict(self.env.link_name_to_index)
@@ -188,6 +192,9 @@ class PandaArmViewer(ShowBase):
     def __init__(self, physics: PhysicsBridge, args: argparse.Namespace) -> None:
         super().__init__()
         self.disableMouse()
+        self.render.setShaderAuto()
+        self.render.setAntialias(AntialiasAttrib.MMultisample)
+        self.render2d.setAntialias(AntialiasAttrib.MMultisample)
         self.physics = physics
         self.paused = False
         self.time_step = args.time_step
@@ -197,6 +204,7 @@ class PandaArmViewer(ShowBase):
         self.show_base = not args.hide_base
         self.show_accents = not args.hide_accents
         self.base_yaw_deg = args.base_yaw
+        self.base_mesh_scale = getattr(args, "base_scale", getattr(physics, "base_mesh_scale", 0.001))
         # Grid sizing (edit here if you want different spans).
         self.grid_step = 0.1
         self.grid_x_neg_cells = 4
@@ -216,6 +224,7 @@ class PandaArmViewer(ShowBase):
         self.link_nodes: Dict[str, NodePath] = {}
         self.joint_sliders: List[DirectSlider] = []
         self.fps_label: DirectLabel | None = None
+        self.filters: CommonFilters | None = None
 
         self._setup_scene()
         self._setup_static_meshes()
@@ -231,18 +240,30 @@ class PandaArmViewer(ShowBase):
         self.camLens.setNearFar(0.01, 10.0)
         # Ambient + key/fill/rim lights for depth and highlights.
         amb = AmbientLight("ambient")
-        # Brighter ambient for overall lift.
-        amb.setColor(Vec4(0.18, 0.18, 0.19, 1))
+        # Warmer ambient for overall lift.
+        amb.setColor(Vec4(0.22, 0.2, 0.18, 1))
         amb_np = self.render.attachNewNode(amb)
         self.render.setLight(amb_np)
 
         key = DirectionalLight("key")
-        # Brighter key with a mild warm tint.
-        key.setColor(Vec4(1.1, 1.05, 1.0, 1))
-        key.setShadowCaster(False)
+        # Brighter key with a warm tint + shadows.
+        key.setColor(Vec4(1.25, 1.05, 0.9, 1))
+        key.setShadowCaster(True, 4096, 4096)
         key_np = self.render.attachNewNode(key)
-        key_np.setHpr(-30, -45, 0)
+        key_np.setHpr(-35, -45, 0)
         self.render.setLight(key_np)
+
+        # Soft fill to lift shadows slightly.
+        fill = DirectionalLight("fill")
+        fill.setColor(Vec4(0.4, 0.45, 0.6, 1))
+        fill.setShadowCaster(False)
+        fill_np = self.render.attachNewNode(fill)
+        fill_np.setHpr(60, -10, 0)
+        self.render.setLight(fill_np)
+
+        # Emissive geometry to visualize light sources.
+        self._add_light_markers()
+        self._setup_postprocess()
 
         # Optional subtle horizon tint via a translucent card.
         try:
@@ -262,6 +283,59 @@ class PandaArmViewer(ShowBase):
         self._create_grid()
         self._update_camera()
 
+    def _add_light_markers(self) -> None:
+        """Add small emissive cubes to visualize light sources in the scene."""
+        try:
+            marker_model = self.loader.loadModel("models/box")
+        except Exception:
+            return
+
+        markers = [
+            {"pos": Vec3(-1.2, 2.0, 1.6), "color": Vec4(1.0, 1.0, 1.0, 1.0), "tint": Vec4(1.1, 1.05, 1.0, 1.0), "scale": 0.08},
+            {"pos": Vec3(1.4, -2.0, 1.2), "color": Vec4(1.0, 1.0, 1.0, 1.0), "tint": Vec4(0.6, 0.9, 1.6, 1.0), "scale": 0.06},
+        ]
+        for cfg in markers:
+            cube = marker_model.copyTo(self.render)
+            cube.setPos(cfg["pos"])
+            cube.setScale(cfg["scale"])
+            # Base white emissive look with a subtle color tint for bloom.
+            cube.setColor(cfg["color"])
+            cube.setColorScale(cfg.get("tint", cfg["color"]) * 8.0)
+            cube.setLightOff()
+            cube.setShaderAuto(False)
+            cube.setTransparency(TransparencyAttrib.MAlpha)
+
+    def _setup_postprocess(self) -> None:
+        """Enable a light bloom to make emissive markers pop."""
+        if self.win is None or self.cam is None:
+            self.filters = None
+            return
+        try:
+            self.filters = CommonFilters(self.win, self.cam)
+            ok = self.filters.setBloom(
+                blend=(0.25, 0.25, 0.25, 0.0),
+                desat=0.2,
+                intensity=2.2,
+                size="large",
+                mintrigger=0.6,
+                maxtrigger=1.0,
+            )
+            if not ok:
+                self.filters = None
+            else:
+                # Add ambient occlusion for extra depth if available.
+                try:
+                    self.filters.setAmbientOcclusion(
+                        strength=0.4,
+                        radius=0.35,
+                        min_samples=8,
+                        max_samples=16,
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            self.filters = None
+
     def _setup_models(self) -> None:
         mesh_dir = Path(__file__).resolve().parent / "qarm" / "meshes"
         mesh_map: Dict[str, List[Path]] = {
@@ -274,6 +348,7 @@ class PandaArmViewer(ShowBase):
 
         for link, paths in mesh_map.items():
             parent = self.render.attachNewNode(f"{link}_node")
+            parent.setShaderAuto(True)
             for path in paths:
                 node = self._load_mesh(path)
                 node.reparentTo(parent)
@@ -387,7 +462,7 @@ class PandaArmViewer(ShowBase):
         size_y_neg = self.grid_y_neg_cells * step
         size_y_pos = self.grid_y_pos_cells * step
         ls = LineSegs()
-        ls.setColor(0.35, 0.35, 0.35, 0.4)
+        ls.setColor(0.65, 0.65, 0.7, 0.8)
         for x in frange(-size_x_neg, size_x_pos + 1e-6, step):
             ls.moveTo(x, -size_y_neg, 0)
             ls.drawTo(x, size_y_pos, 0)
@@ -396,10 +471,22 @@ class PandaArmViewer(ShowBase):
             ls.drawTo(size_x_pos, y, 0)
         grid = self.render.attachNewNode(ls.create())
         grid.setTransparency(True)
+        grid.setLightOff()
+        grid.setBin("background", 5)
+        grid.setDepthOffset(1)
 
     def _setup_static_meshes(self) -> None:
         """Load the pine base and colored accent meshes (visual-only)."""
         models_dir = Path(__file__).resolve().parent / "models"
+
+        # Derive a visual scale so the base remains visible when physics uses a small (e.g., mm) scale.
+        visual_scale = 1.0
+        try:
+            numeric_scale = float(self.base_mesh_scale)
+            if numeric_scale > 1e-6 and numeric_scale < 1.0:
+                visual_scale = 1.0 / numeric_scale
+        except Exception:
+            visual_scale = 1.0
 
         if self.show_base:
             base_path = Path(self.base_mesh_path) if self.base_mesh_path else models_dir / "pinebase.stl"
@@ -407,6 +494,8 @@ class PandaArmViewer(ShowBase):
             base_node.reparentTo(self.render)
             base_node.setH(self.base_yaw_deg)  # rotate around Z at the origin
             base_node.setTwoSided(True)
+            base_node.setScale(self._as_vec3(visual_scale))
+            base_node.setShaderAuto(True)
             mat = Material()
             # Soft pine-like tint with subtle sheen.
             diffuse = Vec4(0.82, 0.72, 0.55, 1)
@@ -428,6 +517,8 @@ class PandaArmViewer(ShowBase):
                 node.reparentTo(self.render)
                 node.setH(self.base_yaw_deg)
                 node.setTwoSided(True)
+                node.setScale(self._as_vec3(visual_scale))
+                node.setShaderAuto(True)
                 mat = Material()
                 mat.setDiffuse(color)
                 mat.setAmbient(color * 0.8)
@@ -447,6 +538,31 @@ class PandaArmViewer(ShowBase):
                 cm_node = self.render.attachNewNode("placeholder")
                 cm_node.setScale(0.02)
                 return cm_node
+
+    @staticmethod
+    def _as_vec3(scale) -> Vec3:
+        """Coerce a scale value (scalar/iterable/string) to a Vec3."""
+        if scale is None:
+            return Vec3(1.0, 1.0, 1.0)
+        if isinstance(scale, (str, bytes)):
+            try:
+                val = float(scale)
+            except Exception:
+                val = 1.0
+            return Vec3(val, val, val)
+        if isinstance(scale, (int, float)):
+            val = float(scale)
+            return Vec3(val, val, val)
+        try:
+            vals = list(scale)
+        except Exception:
+            return Vec3(1.0, 1.0, 1.0)
+        if len(vals) == 1:
+            v = float(vals[0])
+            return Vec3(v, v, v)
+        if len(vals) >= 3:
+            return Vec3(float(vals[0]), float(vals[1]), float(vals[2]))
+        return Vec3(1.0, 1.0, 1.0)
 
     def _on_slider_change(self) -> None:
         values = [slider["value"] for slider in self.joint_sliders]
