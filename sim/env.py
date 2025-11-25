@@ -55,7 +55,7 @@ class QArmSimEnv:
         enable_joint_sliders: bool = False,
         base_mesh_path: Path | None = None,
         base_collision_mesh_path: Path | None = None,
-        base_mesh_scale: float | Sequence[float] = 0.001,
+        base_mesh_scale: float | Sequence[float] = 1.0,
         base_friction: float = 0.8,
         base_restitution: float = 0.0,
         base_yaw_deg: float = 180.0,

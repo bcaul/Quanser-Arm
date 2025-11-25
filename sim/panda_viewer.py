@@ -204,7 +204,7 @@ class PandaArmViewer(ShowBase):
         self.show_base = not args.hide_base
         self.show_accents = not args.hide_accents
         self.base_yaw_deg = args.base_yaw
-        self.base_mesh_scale = getattr(args, "base_scale", getattr(physics, "base_mesh_scale", 0.001))
+        self.base_mesh_scale = getattr(args, "base_scale", getattr(physics, "base_mesh_scale", 1.0))
         # Grid sizing (edit here if you want different spans).
         self.grid_step = 0.1
         self.grid_x_neg_cells = 4
@@ -479,22 +479,13 @@ class PandaArmViewer(ShowBase):
         """Load the pine base and colored accent meshes (visual-only)."""
         models_dir = Path(__file__).resolve().parent / "models"
 
-        # Derive a visual scale so the base remains visible when physics uses a small (e.g., mm) scale.
-        visual_scale = 1.0
-        try:
-            numeric_scale = float(self.base_mesh_scale)
-            if numeric_scale > 1e-6 and numeric_scale < 1.0:
-                visual_scale = 1.0 / numeric_scale
-        except Exception:
-            visual_scale = 1.0
-
         if self.show_base:
             base_path = Path(self.base_mesh_path) if self.base_mesh_path else models_dir / "pinebase.stl"
             base_node = self._load_mesh(base_path)
             base_node.reparentTo(self.render)
             base_node.setH(self.base_yaw_deg)  # rotate around Z at the origin
             base_node.setTwoSided(True)
-            base_node.setScale(self._as_vec3(visual_scale))
+            base_node.setScale(self._as_vec3(self.base_mesh_scale))
             base_node.setShaderAuto(True)
             mat = Material()
             # Soft pine-like tint with subtle sheen.
@@ -517,7 +508,7 @@ class PandaArmViewer(ShowBase):
                 node.reparentTo(self.render)
                 node.setH(self.base_yaw_deg)
                 node.setTwoSided(True)
-                node.setScale(self._as_vec3(visual_scale))
+                node.setScale(self._as_vec3(self.base_mesh_scale))
                 node.setShaderAuto(True)
                 mat = Material()
                 mat.setDiffuse(color)

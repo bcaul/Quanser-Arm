@@ -17,7 +17,7 @@
         "--base-collision-mesh",
         "sim/models/pinebase_collision.stl",
         "--base-scale",
-        "0.001",
+        "1.0",
         "--base-friction",
         "0.8",
         "--base-restitution",
@@ -44,7 +44,7 @@
         "--base-collision-mesh",
         "sim/models/pinebase_collision.stl",
         "--base-scale",
-        "0.001"
+        "1.0"
       ]
     }
   ]
