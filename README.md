@@ -3,7 +3,7 @@
 This repository provides the core structure for a hackathon centred around the
 Quanser QArm robotic manipulator.
 
-Students will control a QArm in simulation (and later on real hardware) by
+You will control a QArm in simulation (and later on real hardware) by
 commanding joint angles and implementing their own kinematics and strategies
 for picking and placing coloured hoops onto stands.
 
@@ -26,6 +26,17 @@ pip install --upgrade pip
 pip install -e .                            # installs pybullet + numpy
 ```
 
+Quick smoke test (no GUI):
+```bash
+python - <<'PY'
+import pybullet as p
+cid = p.connect(p.DIRECT)
+robot = p.loadURDF("sim/qarm/urdf/QARM.urdf")
+print("client:", cid, "robot:", robot)
+p.disconnect()
+PY
+```
+
 - On macOS, you may need Xcode Command Line Tools once: `xcode-select --install`.
 - PyBullet builds a native wheel; it can take a minute on first install.
 - **Every new shell**: reactivate the venv (`source .venv/bin/activate`). If you forget,
@@ -44,16 +55,19 @@ pip install -e .                            # installs pybullet + numpy
 - Open a new VSCode terminal; it should auto-activate `.venv` (or run the `source .venv/bin/activate` / `.venv\Scripts\activate` command shown above).
 - Run `pip install -e .` in that terminal to pull dependencies into the venv. If the interpreter shown in VSCode's status bar is not your venv, click it and pick the `.venv` interpreter.
 
-Quick smoke test (no GUI):
+- **Why bother with a venv?** It keeps this project's packages (pybullet, panda3d, etc.)
+  isolated from your system Python so you don't pollute or break other projects, and you
+  get a repeatable set of dependencies that matches your teammates'.
+
+## Where to start coding
+
+Open `student_template/student_main.py`. That sandbox already creates a QArm via `api.make_qarm()`, commands joint-space waypoints (yaw, shoulder, elbow, wrist), and is the only file most teams need to modify. Drop your own kinematics/motion logic in there while keeping the same `QArmBase` API.
+
+**Want to see something running?**
 ```bash
-python - <<'PY'
-import pybullet as p
-cid = p.connect(p.DIRECT)
-robot = p.loadURDF("sim/qarm/urdf/QARM.urdf")
-print("client:", cid, "robot:", robot)
-p.disconnect()
-PY
+python -m student_template.student_main
 ```
+Run this ^ command in your terminal.
 
 ## Running the sims (Panda3D-first, PyBullet for debug)
 
@@ -64,15 +78,14 @@ PY
   (Requires `panda3d` installed; included in `pip install -e .`.)
 - **PyBullet debug sliders / GUI (useful for quick joint pokes):**
   ```bash
-  python -m sim.actual_sim --real-time
-  python -m sim.run_gui --gui --real-time --sliders
-  ```
-- **Student sandbox (joint-space API, Panda3D by default):**
+python -m sim.actual_sim --real-time
+python -m sim.run_gui --gui --real-time --sliders
+```
+- **Student sandbox (joint-space API):**
   ```bash
-  python -m student_template.student_main                         # opens Panda3D viewport (default)
-  python -m student_template.student_main --headless              # run without Panda3D
-  python -m student_template.student_main --pybullet-gui          # debug GUI if needed
-  python -m student_template.student_main --pybullet-gui --headless  # debug GUI only
+  python -m student_template.student_main               # viewer on (default)
+  python -m student_template.student_main --headless    # no Panda3D window
+  python -m student_template.student_main --pybullet-gui  # PyBullet debug GUI
   ```
 
 ### VSCode run/debug helpers
