@@ -83,6 +83,11 @@ class QArmSimEnv:
                 f"--background_color_blue={self.BACKDROP_COLOR[2]}"
             )
         self.client = p.connect(mode, options=connect_options)
+        p.setPhysicsEngineParameter(
+            numSolverIterations=120,
+            numSubSteps=4,
+            physicsClientId=self.client,
+        )
         self.time_step = time_step
         self.real_time = real_time
         self.gui_enabled = gui
@@ -385,7 +390,7 @@ class QArmSimEnv:
             "GRIPPER_LINK2B",
         }
         default_friction = (0.9, 0.01, 0.01)  # lateral, rolling, spinning
-        gripper_friction = (1.8, 0.05, 0.05)
+        gripper_friction = (1.4, 0.04, 0.04)  # slightly softer to reduce jitter
         # Base link is index -1 in Bullet; give it the default friction.
         p.changeDynamics(
             self.robot_id,
@@ -395,6 +400,8 @@ class QArmSimEnv:
             spinningFriction=default_friction[2],
             restitution=0.0,
             contactProcessingThreshold=0.0,
+            contactStiffness=8e4,
+            contactDamping=6e3,
             physicsClientId=self.client,
         )
         for name, idx in self.link_name_to_index.items():
@@ -407,6 +414,9 @@ class QArmSimEnv:
                 spinningFriction=fric[2],
                 restitution=0.0,
                 contactProcessingThreshold=0.0,
+                contactStiffness=8e4,
+                contactDamping=6e3,
+                ccdSweptSphereRadius=0.02 if name in gripper_links else 0.0,
                 physicsClientId=self.client,
             )
 
@@ -593,13 +603,13 @@ class QArmSimEnv:
             except Exception:
                 pass
         friction_kwargs = {
-            "lateralFriction": 2.0,
+            "lateralFriction": 1.4,
             "restitution": 0.0,
-            "rollingFriction": 0.002,
-            "spinningFriction": 0.002,
+            "rollingFriction": 0.04,
+            "spinningFriction": 0.04,
             "contactProcessingThreshold": 0.0,
-            "contactStiffness": 2e5,
-            "contactDamping": 2e3,
+            "contactStiffness": 8e4,
+            "contactDamping": 6e3,
         }
         if mass > 0.0:
             ccd_radius = 0.015  # higher minimum to help very small scaled meshes

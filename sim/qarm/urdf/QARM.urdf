@@ -396,7 +396,7 @@
       effort="0"
       velocity="0" />
     <dynamics
-      damping="0.05"
+      damping="0.15"
       friction="1.0" />
   </joint>
   <link
@@ -459,7 +459,7 @@
       effort="0"
       velocity="0" />
     <dynamics
-      damping="0.05"
+      damping="0.15"
       friction="1.0" />
   </joint>
   <link
@@ -522,7 +522,7 @@
       effort="0"
       velocity="0" />
     <dynamics
-      damping="0.05"
+      damping="0.15"
       friction="1.0" />
   </joint>
   <link
@@ -585,7 +585,7 @@
       effort="0"
       velocity="0" />
     <dynamics
-      damping="0.05"
+      damping="0.15"
       friction="1.0" />
   </joint>
 </robot>

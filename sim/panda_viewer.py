@@ -119,6 +119,12 @@ class PhysicsBridge:
             self.env.list_kinematic_objects() if hasattr(self.env, "list_kinematic_objects") else []
         )
         self.kinematic_body_nodes: List[Tuple[int, NodePath]] = []
+        self.active_grasp_cid: int | None = None
+        self.gripper_link_indices: List[int] = [
+            idx
+            for name, idx in self.link_name_to_index.items()
+            if name in {"GRIPPER_LINK1A", "GRIPPER_LINK1B", "GRIPPER_LINK2A", "GRIPPER_LINK2B", "END-EFFECTOR"}
+        ]
 
         self.joint_order: List[int] = list(self.env.movable_joint_indices)
         self.joint_meta: List[Tuple[int, str, float, float]] = []
@@ -200,6 +206,62 @@ class PhysicsBridge:
         if len(values) != len(self.joint_order):
             raise ValueError(f"Expected {len(self.joint_order)} joint values, got {len(values)}")
         self.env.set_joint_positions(values)
+
+    def _link_pose(self, body_id: int, link_idx: int) -> Tuple[Tuple[float, float, float], Tuple[float, float, float, float]]:
+        if link_idx == -1:
+            return p.getBasePositionAndOrientation(body_id, physicsClientId=self.client)
+        state = p.getLinkState(body_id, link_idx, computeForwardKinematics=True, physicsClientId=self.client)
+        return state[4], state[5]
+
+    def grasp_from_contacts(self) -> int | None:
+        """Create a fixed constraint from the first gripper contact to stick the grasped body."""
+        if self.active_grasp_cid is not None:
+            return self.active_grasp_cid
+        if not self.gripper_link_indices:
+            return None
+        contacts = p.getContactPoints(bodyA=self.robot_id, physicsClientId=self.client)
+        for c in contacts:
+            link_a = c[3]
+            if link_a not in self.gripper_link_indices:
+                continue
+            other_body = c[1]
+            other_link = c[4]
+            if other_body == self.robot_id:
+                continue
+            pos_on_a = c[5]
+            pos_on_b = c[6]
+
+            def to_local(body_id: int, link_idx: int, world_pos: Tuple[float, float, float]) -> Tuple[float, float, float]:
+                world_link_pos, world_link_orn = self._link_pose(body_id, link_idx)
+                inv_pos, inv_orn = p.invertTransform(world_link_pos, world_link_orn)
+                local_pos, _ = p.multiplyTransforms(inv_pos, inv_orn, world_pos, [0.0, 0.0, 0.0, 1.0])
+                return local_pos
+
+            parent_local = to_local(self.robot_id, link_a, pos_on_a)
+            child_local = to_local(other_body, other_link, pos_on_b)
+            cid = p.createConstraint(
+                parentBodyUniqueId=self.robot_id,
+                parentLinkIndex=link_a,
+                childBodyUniqueId=other_body,
+                childLinkIndex=other_link,
+                jointType=p.JOINT_FIXED,
+                jointAxis=[0.0, 0.0, 0.0],
+                parentFramePosition=parent_local,
+                childFramePosition=child_local,
+                physicsClientId=self.client,
+            )
+            p.changeConstraint(cid, maxForce=80.0, physicsClientId=self.client)
+            self.active_grasp_cid = cid
+            return cid
+        return None
+
+    def release_grasp(self) -> None:
+        if self.active_grasp_cid is not None:
+            try:
+                p.removeConstraint(self.active_grasp_cid, physicsClientId=self.client)
+            except Exception:
+                pass
+            self.active_grasp_cid = None
 
     def get_link_poses(self) -> Dict[str, Tuple[Tuple[float, float, float], Tuple[float, float, float, float]]]:
         poses: Dict[str, Tuple[Tuple[float, float, float], Tuple[float, float, float, float]]] = {}
@@ -535,6 +597,9 @@ class PandaArmViewer(ShowBase):
         self.accept("mouse3-up", self._stop_drag)
         self.accept("wheel_up", self._zoom, [-0.05])
         self.accept("wheel_down", self._zoom, [0.05])
+        # Grasp helpers
+        self.accept("g", self._grasp_contact)
+        self.accept("h", self._release_grasp)
         # Keyboard pan
         pan_step = 0.02
         self.accept("w", self._pan_target, [0, pan_step])
@@ -765,6 +830,16 @@ class PandaArmViewer(ShowBase):
         if self._gripper_pair_slider is not None:
             self._gripper_pair_slider["value"] = 0.0
         self._apply_slider_targets()
+
+    def _grasp_contact(self) -> None:
+        cid = self.physics.grasp_from_contacts()
+        if cid is not None:
+            print(f"[PandaViewer] Grasp constraint created (id={cid}).")
+
+    def _release_grasp(self) -> None:
+        if self.physics.active_grasp_cid is not None:
+            print(f"[PandaViewer] Releasing grasp constraint (id={self.physics.active_grasp_cid}).")
+        self.physics.release_grasp()
 
     def _toggle_pause(self) -> None:
         self.paused = not self.paused
