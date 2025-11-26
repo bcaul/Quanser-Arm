@@ -437,11 +437,11 @@ class PandaArmViewer(ShowBase):
                 if link.startswith("GRIPPER") and max(scale) > 0.1:
                     scale = (0.001, 0.001, 0.001)
                 node.setScale(*scale)
-            # Set per-link colors (base dark grey, red accent on YAW) via a material.
+            # Set per-link colors (base dark grey, red accent on select links) via a material.
             mat = Material()
             if link == "YAW":
                 diffuse = Vec4(0.6, 0.14, 0.14, 1)
-            elif link in {"END-EFFECTOR", "GRIPPER_BASE", "GRIPPER_LINK1A"}:
+            elif link in {"END-EFFECTOR", "GRIPPER_BASE", "GRIPPER_LINK1B", "GRIPPER_LINK2B"}:
                 diffuse = Vec4(0.6, 0.14, 0.14, 1)  # make gripper red
             else:
                 diffuse = Vec4(0.12, 0.12, 0.14, 1)

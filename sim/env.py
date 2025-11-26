@@ -346,7 +346,7 @@ class QArmSimEnv:
 
     def _apply_robot_palette(self) -> None:
         """Tint the robot to the default dark grey and red colorway."""
-        accent_links = {1, 3}  # YAW and ELBOW joints look good with red highlights.
+        accent_links = {1, 3, 7, 9}  # YAW, ELBOW, gripper 1B and 2B get red highlights.
         visual_data = p.getVisualShapeData(self.robot_id, physicsClientId=self.client)
         for shape in visual_data:
             link_index = shape[1]
@@ -555,10 +555,10 @@ class QArmSimEnv:
             p.changeDynamics(
                 body_id,
                 -1,
-                lateralFriction=0.8,
+                lateralFriction=1.6,
                 restitution=0.0,
-                rollingFriction=0.001,
-                spinningFriction=0.001,
+                rollingFriction=0.02,
+                spinningFriction=0.02,
                 contactProcessingThreshold=0.0,
                 ccdSweptSphereRadius=ccd_radius,
                 contactStiffness=2e5,

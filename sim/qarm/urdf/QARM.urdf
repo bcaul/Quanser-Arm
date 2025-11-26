@@ -395,6 +395,9 @@
       upper="3.14159"
       effort="0"
       velocity="0" />
+    <dynamics
+      damping="0.05"
+      friction="1.0" />
   </joint>
   <link
     name="GRIPPER_LINK1B">
@@ -455,6 +458,9 @@
       upper="3.14159"
       effort="0"
       velocity="0" />
+    <dynamics
+      damping="0.05"
+      friction="1.0" />
   </joint>
   <link
     name="GRIPPER_LINK2A">
@@ -515,6 +521,9 @@
       upper="3.14159"
       effort="0"
       velocity="0" />
+    <dynamics
+      damping="0.05"
+      friction="1.0" />
   </joint>
   <link
     name="GRIPPER_LINK2B">
@@ -575,5 +584,8 @@
       upper="3.14159"
       effort="0"
       velocity="0" />
+    <dynamics
+      damping="0.05"
+      friction="1.0" />
   </joint>
 </robot>
