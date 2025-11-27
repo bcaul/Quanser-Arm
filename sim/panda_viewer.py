@@ -619,6 +619,25 @@ class PandaArmViewer(ShowBase):
                 self.locked_sliders.append((joint_idx, slider))
                 y -= 0.12
 
+        # Reset hoops button (bottom-right).
+        try:
+            from direct.gui.DirectGui import DirectButton
+
+            btn = DirectButton(
+                text="Reset Hoops",
+                scale=0.06,
+                pos=(0.75, 0, -0.9),
+                command=self._reset_hoops,
+                frameColor=(0.18, 0.18, 0.22, 0.8),
+                text_fg=(1, 1, 1, 1),
+                text_align=TextNode.ACenter,
+                relief=1,
+            )
+            btn.setTransparency(TransparencyAttrib.MAlpha)
+            btn.setBin("fixed", 100)
+        except Exception:
+            pass
+
     def _bind_controls(self) -> None:
         self.accept("escape", self._quit)
         self.accept("r", self._reset)
@@ -865,6 +884,14 @@ class PandaArmViewer(ShowBase):
                 self.physics.set_locked_joint(joint_idx, slider["value"])
             except Exception:
                 continue
+
+    def _reset_hoops(self) -> None:
+        """Reset kinematic/dynamic hoops to their original poses if available."""
+        try:
+            if hasattr(self.physics, "env") and hasattr(self.physics.env, "reset"):
+                self.physics.env.reset_hoops()  # type: ignore[attr-defined]
+        except Exception as exc:
+            print("[PandaViewer] Failed to reset hoops:", exc)
 
     def _zoom(self, delta: float) -> None:
         self.cam_distance = max(0.1, self.cam_distance + delta)

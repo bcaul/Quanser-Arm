@@ -719,6 +719,22 @@ class QArmSimEnv:
         except Exception:
             pass
 
+    # ---------- Hoop reset helper (used by Panda viewer button) ----------
+    def reset_hoops(self) -> None:
+        """Reset hoop-like kinematic objects to their original pose if they came from add_kinematic_object."""
+        if not getattr(self, "kinematic_objects", None):
+            return
+        for obj in self.kinematic_objects:
+            try:
+                p.resetBasePositionAndOrientation(
+                    obj.body_id,
+                    obj.position,
+                    obj.orientation_xyzw,
+                    physicsClientId=self.client,
+                )
+            except Exception:
+                continue
+
     @staticmethod
     def _as_vec3(scale: float | Sequence[float]) -> list[float]:
         """Coerce a float or XYZ sequence to a 3-element scale vector."""

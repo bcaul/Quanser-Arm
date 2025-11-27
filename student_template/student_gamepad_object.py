@@ -35,6 +35,7 @@ STEP_S = 0.02
 
 # Preload multiple hoops (rings) so you have several to pick/place.
 KINEMATIC_OBJECTS: list[dict[str, object]] = []
+HOOP_COLLISION = MODEL_DIR / "hoop-collision-inset.stl"
 for i, offset in enumerate(
     [
         (0.0, -0.30, 0.08),
@@ -54,6 +55,7 @@ for i, offset in enumerate(
             "scale": 0.001,
             "mass": 0.1,
             "force_convex_for_dynamic": True,
+            "collision_mesh_path": HOOP_COLLISION,
             "rgba": color,
         }
     )
