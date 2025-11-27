@@ -24,6 +24,14 @@ SHOW_JOINT_SLIDERS = True
 # Set True to force Panda3D to reload STL meshes each launch (bypasses cache).
 RELOAD_MESHES = False
 
+HOOP_SEGMENT = MODEL_DIR / "hoop-segment.stl"
+HOOP_COLLISION_SEGMENTS = {
+    "mesh_path": HOOP_SEGMENT,
+    "radius": 68.0 / 2.0,  # mm ring diameter -> 34 mm radius before scaling
+    "yaw_step_deg": 29.9,
+    "count": 12,
+}
+
 # Preload the bundled Blender monkey so students see a static mesh instantly.
 KINEMATIC_OBJECTS: list[dict[str, object]] = [
     {
@@ -33,6 +41,7 @@ KINEMATIC_OBJECTS: list[dict[str, object]] = [
         "scale": 0.001,
         "mass": 0.1,
         "force_convex_for_dynamic": True,
+        "collision_segments": HOOP_COLLISION_SEGMENTS,
         "rgba": (0.1, 0.9, 0.1, 1.0),  # bright green hoop
     },
     {
@@ -83,6 +92,8 @@ def add_kinematic_objects(arm: QArmBase, objects: list[dict[str, object]]) -> No
             position=obj.get("position", (0.0, 0.0, 0.0)),
             scale=obj.get("scale", 1.0),
             collision_scale=obj.get("collision_scale"),
+            collision_mesh_path=obj.get("collision_mesh_path"),
+            collision_segments=obj.get("collision_segments"),
             rgba=obj.get("rgba"),
             mass=obj.get("mass", 0.0),
             force_convex_for_dynamic=obj.get("force_convex_for_dynamic", True),

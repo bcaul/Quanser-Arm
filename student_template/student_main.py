@@ -406,6 +406,8 @@ def add_kinematic_objects(arm: QArmBase, objects: list[dict[str, object]]) -> No
             position=obj.get("position", (0.0, 0.0, 0.0)),
             scale=obj.get("scale", 1.0),
             collision_scale=obj.get("collision_scale"),
+            collision_mesh_path=obj.get("collision_mesh_path"),
+            collision_segments=obj.get("collision_segments"),
             rgba=obj.get("rgba"),
             mass=obj.get("mass", 0.0),
             force_convex_for_dynamic=obj.get("force_convex_for_dynamic", True),

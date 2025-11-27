@@ -557,6 +557,7 @@ class QArmSimEnv:
         collision_scale: float | Sequence[float] | None = None,
         rgba: Sequence[float] | None = None,
         collision_mesh_path: str | Path | None = None,
+        collision_segments: dict[str, object] | None = None,
         enable_collision: bool = True,
         mass: float = 0.0,
         force_convex_for_dynamic: bool = True,
@@ -572,6 +573,8 @@ class QArmSimEnv:
         convex collision shape (PyBullet ignores concave collision on dynamic bodies).
         Set `align_aabb_center=True` to reposition the body so its AABB center matches
         the requested position (helpful for off-center mesh origins). Defaults to False.
+        Provide `collision_segments` to build a compound collision shape from repeated
+        mesh segments (e.g., a hoop made of convex slices arranged in a ring).
         """
 
         def _coerce_xyz(values: Sequence[float]) -> list[float]:
@@ -593,6 +596,43 @@ class QArmSimEnv:
         pos_xyz = _coerce_xyz(position)
         scale_vec = self._as_vec3(scale)
         collision_scale_vec = self._as_vec3(collision_scale) if collision_scale is not None else scale_vec
+
+        def _create_segment_ring_collision(
+            segment_mesh: Path,
+            *,
+            radius_m: float,
+            yaw_step_deg: float,
+            count_override: int | None = None,
+        ) -> int:
+            if yaw_step_deg <= 0.0:
+                raise ValueError(f"yaw_step_deg must be > 0, got {yaw_step_deg}")
+            count = count_override if count_override is not None else int(round(360.0 / yaw_step_deg))
+            count = max(1, count)
+            yaw_step_rad = math.radians(yaw_step_deg)
+            positions = []
+            orientations = []
+            for i in range(count):
+                yaw = yaw_step_rad * i
+                c, s = math.cos(yaw), math.sin(yaw)
+                positions.append([radius_m * c, radius_m * s, 0.0])
+                orientations.append(p.getQuaternionFromEuler([0.0, 0.0, yaw]))
+            segment_flags = (
+                0
+                if (mass > 0.0 and force_convex_for_dynamic)
+                else p.GEOM_FORCE_CONCAVE_TRIMESH
+            )
+            collision_shape = p.createCollisionShapeArray(
+                shapeTypes=[p.GEOM_MESH] * count,
+                fileNames=[str(segment_mesh)] * count,
+                meshScales=[list(collision_scale_vec)] * count,
+                flags=[segment_flags] * count,
+                collisionFramePositions=positions,
+                collisionFrameOrientations=orientations,
+                physicsClientId=self.client,
+            )
+            if collision_shape < 0:
+                raise RuntimeError(f"Failed to create compound collision from {segment_mesh}")
+            return collision_shape
 
         if orientation_quat_xyzw is not None:
             quat_vals = list(orientation_quat_xyzw)
@@ -634,20 +674,40 @@ class QArmSimEnv:
         collision_shape = -1
         used_collision_path: Path | None = None
         if enable_collision:
-            used_collision_path = collision_mesh or mesh
-            collision_shape = p.createCollisionShape(
-                shapeType=p.GEOM_MESH,
-                fileName=str(used_collision_path),
-                meshScale=collision_scale_vec,
-                flags=(
-                    0
-                    if (mass > 0.0 and force_convex_for_dynamic)
-                    else p.GEOM_FORCE_CONCAVE_TRIMESH
-                ),
-                physicsClientId=self.client,
-            )
-            if collision_shape < 0:
-                raise RuntimeError(f"Failed to create collision shape from {used_collision_path}")
+            if collision_segments:
+                segment_mesh = Path(collision_segments.get("mesh_path", collision_mesh or mesh))
+                if not segment_mesh.exists():
+                    raise FileNotFoundError(f"Collision segment mesh not found: {segment_mesh}")
+                yaw_step = float(collision_segments.get("yaw_step_deg", 29.9))
+                count_override = collision_segments.get("count")
+                count_override = int(count_override) if count_override is not None else None
+                segment_radius_units = float(collision_segments.get("radius", 68.0 / 2.0))
+                # Assume uniform scaling; fall back to X scale if not uniform.
+                radius_scale = collision_scale_vec[0]
+                if not all(abs(radius_scale - v) < 1e-8 for v in collision_scale_vec):
+                    radius_scale = collision_scale_vec[0]
+                collision_shape = _create_segment_ring_collision(
+                    segment_mesh,
+                    radius_m=segment_radius_units * radius_scale,
+                    yaw_step_deg=yaw_step,
+                    count_override=count_override,
+                )
+                used_collision_path = segment_mesh
+            else:
+                used_collision_path = collision_mesh or mesh
+                collision_shape = p.createCollisionShape(
+                    shapeType=p.GEOM_MESH,
+                    fileName=str(used_collision_path),
+                    meshScale=collision_scale_vec,
+                    flags=(
+                        0
+                        if (mass > 0.0 and force_convex_for_dynamic)
+                        else p.GEOM_FORCE_CONCAVE_TRIMESH
+                    ),
+                    physicsClientId=self.client,
+                )
+                if collision_shape < 0:
+                    raise RuntimeError(f"Failed to create collision shape from {used_collision_path}")
 
         body_id = p.createMultiBody(
             baseMass=mass,
@@ -676,13 +736,14 @@ class QArmSimEnv:
                 pass
         is_hoop = "hoop" in mesh.name.lower()
         friction_kwargs = {
-            "lateralFriction": 0.35 if is_hoop else 1.4,
+            # Hoops get higher friction to avoid sliding off stands too easily.
+            "lateralFriction": 0.6 if is_hoop else 1.4,
             "restitution": 0.0,
-            "rollingFriction": 0.005 if is_hoop else 0.04,
-            "spinningFriction": 0.005 if is_hoop else 0.04,
+            "rollingFriction": 0.02 if is_hoop else 0.04,
+            "spinningFriction": 0.02 if is_hoop else 0.04,
             "contactProcessingThreshold": 0.0,
-            "contactStiffness": 6e4 if is_hoop else 8e4,
-            "contactDamping": 4e3 if is_hoop else 6e3,
+            "contactStiffness": 8e4 if is_hoop else 8e4,
+            "contactDamping": 6e3 if is_hoop else 6e3,
         }
         if mass > 0.0:
             ccd_radius = 0.015  # higher minimum to help very small scaled meshes

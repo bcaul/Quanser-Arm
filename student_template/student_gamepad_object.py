@@ -35,14 +35,20 @@ STEP_S = 0.02
 
 # Preload multiple hoops (rings) so you have several to pick/place.
 KINEMATIC_OBJECTS: list[dict[str, object]] = []
-HOOP_COLLISION = MODEL_DIR / "hoop-collision.stl"
+HOOP_SEGMENT = MODEL_DIR / "hoop-segment.stl"
+HOOP_COLLISION_SEGMENTS = {
+    "mesh_path": HOOP_SEGMENT,
+    "radius": 68.0 / 2.0,  # mm ring diameter -> 34 mm radius before scaling
+    "yaw_step_deg": 29.9,
+    "count": 12,
+}
 for i, offset in enumerate(
     [
         (0.0, -0.30, 0.08),
         (0.1, -0.35, 0.08),
         (-0.1, -0.40, 0.08),
-        (0.05, -0.25, 0.08),
-        (-0.05, -0.32, 0.08),
+        (0.23, -0.25, 0.08),
+        (0.2, -0.5, 0.08),
     ]
 ):
     hue = 0.1 + 0.15 * i
@@ -55,7 +61,7 @@ for i, offset in enumerate(
             "scale": 0.001,
             "mass": 0.1,
             "force_convex_for_dynamic": True,
-            "collision_mesh_path": HOOP_COLLISION,
+            "collision_segments": HOOP_COLLISION_SEGMENTS,
             "rgba": color,
         }
     )
@@ -429,6 +435,8 @@ def add_kinematic_objects(arm: QArmBase, objects: list[dict[str, object]]) -> No
             position=obj.get("position", (0.0, 0.0, 0.0)),
             scale=obj.get("scale", 1.0),
             collision_scale=obj.get("collision_scale"),
+            collision_mesh_path=obj.get("collision_mesh_path"),
+            collision_segments=obj.get("collision_segments"),
             rgba=obj.get("rgba"),
             mass=obj.get("mass", 0.0),
             force_convex_for_dynamic=obj.get("force_convex_for_dynamic", True),
