@@ -35,7 +35,7 @@ STEP_S = 0.02
 
 # Preload multiple hoops (rings) so you have several to pick/place.
 KINEMATIC_OBJECTS: list[dict[str, object]] = []
-HOOP_COLLISION = MODEL_DIR / "hoop-collision-inset.stl"
+HOOP_COLLISION = MODEL_DIR / "hoop-collision.stl"
 for i, offset in enumerate(
     [
         (0.0, -0.30, 0.08),
@@ -62,7 +62,12 @@ for i, offset in enumerate(
 
 # Controller + teleop defaults.
 USE_GAMEPAD_CONTROL = True
-GAMEPAD_DEADZONE = 0.12
+GAMEPAD_DEADZONE = 0.1
+# Enable to log raw/processed stick/button values and commanded targets periodically.
+GAMEPAD_DEBUG = True
+GAMEPAD_DEBUG_INTERVAL_S = 0.5
+# When True, dump every button state each debug interval.
+GAMEPAD_DEBUG_ALL_BUTTONS = False
 # SDL can run headless for joystick polling so we do not clash with Panda3D's window.
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 # Axis indices follow the common Xbox layout seen by pygame/SDL (adjust if yours differs).
@@ -72,10 +77,12 @@ JOYSTICK_AXES = {
     # On this controller: axis 2 = right stick X, axis 3 = right stick Y (from debug).
     "right_x": 2,
     "right_y": 3,
-    # Use the right trigger for the gripper; adjust index if your controller differs.
-    "right_trigger": 5,
 }
-TRIGGER_DEADZONE = 0.02
+# Button indices (default Xbox layout: LB=4, RB=5).
+JOYSTICK_BUTTONS = {
+    "left_bumper": 9,
+    "right_bumper": 10,
+}
 # Map stick extremes directly to joint angles (±360 deg here; clamped to URDF limits).
 JOINT_TARGET_RANGE_RAD = {
     "yaw": math.radians(360.0),
@@ -85,12 +92,18 @@ JOINT_TARGET_RANGE_RAD = {
 # Optional per-joint overrides for min/max angles (radians). Leave empty to use URDF limits.
 JOINT_LIMIT_OVERRIDES: dict[str, tuple[float, float]] = {
     "yaw": (math.radians(-120.0), math.radians(30.0)),  # -120° to +30°
-    "shoulder": (math.radians(0.0), math.radians(90.0)),  # 0° to +90°
+    "shoulder": (math.radians(20), math.radians(90.0)),  # 0° to +90°
     "gripper_joint1a": (math.radians(10.0), math.radians(-60.0)),  # -20° to +60°
     "gripper_joint2a": (math.radians(-10.0), math.radians(60.0)),  # -20° to +60°
 }
+JOINT_SPEED_RAD_PER_S = {
+    "yaw": 1.4,
+    "shoulder": 1.0,
+    "elbow": 1.2,
+}
 GRIPPER_TARGET_RANGE_RAD = math.radians(120.0)  # symmetric +/- clamp, inverted on one finger to close
 MAX_GRIPPER_RANGE_RAD = 1.2  # safety clamp if limits unavailable.
+GRIPPER_SPEED_RAD_PER_S = 2.0  # for bumper-based incremental control
 
 
 def clamp(value: float, limits: tuple[float, float] | None) -> float:
@@ -142,8 +155,10 @@ class XboxController:
         self.pygame = pygame
         self.deadzone = float(deadzone)
         self.axis_map = dict(axis_map)
+        self.button_map = dict(JOYSTICK_BUTTONS)
         self.zero_offsets: dict[str, float] = {}
-        self._last_trigger_value: float = 0.0
+        self._last_buttons: dict[str, int] = {}
+        self._all_buttons: list[int] = []
         pygame.init()
         pygame.joystick.init()
         if pygame.joystick.get_count() == 0:
@@ -152,6 +167,7 @@ class XboxController:
         self.joystick.init()
         print(f"[Gamepad] Connected to: {self.joystick.get_name()}")
         self.axis_count = self.joystick.get_numaxes()
+        self.button_count = self.joystick.get_numbuttons()
         self._calibrate_zero()
 
     def _calibrate_zero(self) -> None:
@@ -177,15 +193,24 @@ class XboxController:
         centered = raw - self.zero_offsets.get(name, 0.0)
         return clamp(centered, (-1.0, 1.0))
 
+    def _button(self, name: str) -> int:
+        idx = self.button_map.get(name, -1)
+        if idx < 0 or idx >= self.button_count:
+            return 0
+        try:
+            return int(self.joystick.get_button(idx))
+        except Exception:
+            return 0
+
     def read(self) -> StickAxes:
         """Return square-bounded axes in the range [-1, 1]."""
         self.pygame.event.pump()
+        self._all_buttons = [int(self.joystick.get_button(i)) for i in range(self.button_count)]
         raw = {
             "left_x": self._raw_axis("left_x"),
             "left_y": self._raw_axis("left_y"),
             "right_x": self._raw_axis("right_x"),
             "right_y": self._raw_axis("right_y"),
-            "right_trigger": self._raw_axis("right_trigger") if "right_trigger" in self.axis_map else 0.0,
         }
         centered = {
             name: raw[name] - self.zero_offsets.get(name, 0.0)
@@ -195,16 +220,21 @@ class XboxController:
         rx, ry = centered["right_x"], -centered["right_y"]
         lx_sq, ly_sq = square_stick(lx, ly, self.deadzone)
         rx_sq, ry_sq = square_stick(rx, ry, self.deadzone)
-        trig_raw = raw.get("right_trigger", 0.0)
-        trig_mapped = max(0.0, min(1.0, (trig_raw + 1.0) * 0.5))
-        self._last_trigger_value = 0.0 if trig_mapped < TRIGGER_DEADZONE else trig_mapped
+        self._last_buttons = {
+            "left_bumper": self._button("left_bumper"),
+            "right_bumper": self._button("right_bumper"),
+        }
         return StickAxes(left_x=lx_sq, left_y=ly_sq, right_x=rx_sq, right_y=ry_sq)
 
     def gripper_input(self) -> float | None:
-        """Return gripper axis input if mapped (e.g., right trigger), else None."""
-        if "right_trigger" not in self.axis_map:
-            return None
-        return self._last_trigger_value
+        """Return gripper input from bumpers: left=-1 (close), right=+1 (open)."""
+        lb = self._last_buttons.get("left_bumper", 0)
+        rb = self._last_buttons.get("right_bumper", 0)
+        if lb and not rb:
+            return -1.0
+        if rb and not lb:
+            return 1.0
+        return 0.0
 
 
 class GamepadTeleop:
@@ -291,29 +321,74 @@ class GamepadTeleop:
             target = axis_value * span
             joints[idx] = clamp(target, (-span, span))
 
-    def _apply_gripper(self, joints: list[float], axis_value: float) -> None:
+    def _apply_gripper(self, joints: list[float], axis_value: float, dt: float) -> None:
         if not self.gripper_indices:
             return
-        base_target = axis_value * GRIPPER_TARGET_RANGE_RAD
+        delta = axis_value * GRIPPER_SPEED_RAD_PER_S * dt
         for i, idx in enumerate(self.gripper_indices):
             sign = -self.gripper_signs.get(idx, -1 if i % 2 else 1)
             limits = self.limits.get(idx, (-MAX_GRIPPER_RANGE_RAD, MAX_GRIPPER_RANGE_RAD))
-            joints[idx] = clamp(base_target * sign, limits)
+            joints[idx] = clamp(joints[idx] + delta * sign, limits)
+        self._sync_gripper_pairs(joints)
+
+    def _apply_joint_velocity(self, joints: list[float], joint_name: str, axis_value: float, dt: float) -> None:
+        """Integrate joint motion based on stick deflection (speed scales with |axis|)."""
+        idx = self.name_to_idx.get(joint_name)
+        if idx is None:
+            return
+        speed = JOINT_SPEED_RAD_PER_S.get(joint_name, 1.0)
+        gain = 0.4 + 0.6 * abs(axis_value)
+        delta = axis_value * speed * gain * dt
+        limits = self.limits.get(idx, (-math.pi, math.pi))
+        joints[idx] = clamp(joints[idx] + delta, limits)
+
+    def _sync_gripper_pairs(self, joints: list[float]) -> None:
+        """Keep 1B matched to 1A and 2B matched to 2A so those joints move as a unit."""
+        pairs = [("gripper_joint1a", "gripper_joint1b"), ("gripper_joint2a", "gripper_joint2b")]
+        for master, follower in pairs:
+            idx_master = self.name_to_idx.get(master)
+            idx_follower = self.name_to_idx.get(follower)
+            if idx_master is None or idx_follower is None:
+                continue
+            if idx_master < len(joints) and idx_follower < len(joints):
+                joints[idx_follower] = joints[idx_master]
 
     def run(self, stop_event: threading.Event) -> None:
         print(
             "[Gamepad] Left stick: yaw (X) + shoulder (Y). "
-            "Right trigger: gripper. Right stick Y: elbow. "
+            "Bumpers: gripper close/open. Right stick Y: elbow. "
             "Stick extremes map directly to target angles."
         )
+        last_debug_log = 0.0
+        last_time = time.time()
         while not stop_event.is_set():
             axes = self.controller.read()
+            now = time.time()
+            dt = max(1e-4, now - last_time)
+            last_time = now
             targets = list(self.arm.get_joint_positions())
-            self._set_axis_target(targets, "yaw", -axes.left_x)
-            self._set_axis_target(targets, "shoulder", -axes.left_y)
-            self._set_axis_target(targets, "elbow", -axes.right_y)
+            self._apply_joint_velocity(targets, "yaw", -axes.left_x, dt)
+            self._apply_joint_velocity(targets, "shoulder", -axes.left_y, dt)
+            self._apply_joint_velocity(targets, "elbow", -axes.right_y, dt)
             grip_input = self.controller.gripper_input()
-            self._apply_gripper(targets, grip_input if grip_input is not None else axes.right_x)
+            self._apply_gripper(targets, grip_input if grip_input is not None else axes.right_x, dt)
+            now = time.time()
+            if GAMEPAD_DEBUG and (now - last_debug_log) >= GAMEPAD_DEBUG_INTERVAL_S:
+                dbg_axes = {
+                    "lx": round(axes.left_x, 3),
+                    "ly": round(axes.left_y, 3),
+                    "rx": round(axes.right_x, 3),
+                    "ry": round(axes.right_y, 3),
+                }
+                dbg_buttons = {k: v for k, v in getattr(self.controller, "_last_buttons", {}).items()}
+                dbg_all = getattr(self.controller, "_all_buttons", [])
+                msg = "[Gamepad] dbg axes {} buttons {} targets {}".format(
+                    dbg_axes, dbg_buttons, [round(v, 3) for v in targets]
+                )
+                if GAMEPAD_DEBUG_ALL_BUTTONS:
+                    msg += f" all_buttons={dbg_all}"
+                print(msg)
+                last_debug_log = now
             try:
                 self.arm.set_joint_positions(targets)
             except Exception as exc:

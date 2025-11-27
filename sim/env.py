@@ -417,8 +417,10 @@ class QArmSimEnv:
             "GRIPPER_LINK2A",
             "GRIPPER_LINK2B",
         }
+        pad_links = {"GRIPPER_LINK1B", "GRIPPER_LINK2B"}
         default_friction = (0.9, 0.01, 0.01)  # lateral, rolling, spinning
-        gripper_friction = (1.4, 0.04, 0.04)  # slightly softer to reduce jitter
+        gripper_friction = (1.6, 0.04, 0.04)  # main gripper surfaces
+        pad_friction = (2.5, 0.1, 0.1)  # foam-like pads on inner B faces
         # Base link is index -1 in Bullet; give it the default friction.
         p.changeDynamics(
             self.robot_id,
@@ -433,7 +435,21 @@ class QArmSimEnv:
             physicsClientId=self.client,
         )
         for name, idx in self.link_name_to_index.items():
-            fric = gripper_friction if name in gripper_links else default_friction
+            if name in pad_links:
+                fric = pad_friction
+                stiffness = 6e4
+                damping = 1e4
+                ccd = 0.025
+            elif name in gripper_links:
+                fric = gripper_friction
+                stiffness = 6e4
+                damping = 8e3
+                ccd = 0.02
+            else:
+                fric = default_friction
+                stiffness = 8e4
+                damping = 6e3
+                ccd = 0.0
             p.changeDynamics(
                 self.robot_id,
                 idx,
@@ -442,9 +458,9 @@ class QArmSimEnv:
                 spinningFriction=fric[2],
                 restitution=0.0,
                 contactProcessingThreshold=0.0,
-                contactStiffness=8e4,
-                contactDamping=6e3,
-                ccdSweptSphereRadius=0.02 if name in gripper_links else 0.0,
+                contactStiffness=stiffness,
+                contactDamping=damping,
+                ccdSweptSphereRadius=ccd,
                 physicsClientId=self.client,
             )
 
