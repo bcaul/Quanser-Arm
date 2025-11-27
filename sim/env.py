@@ -57,8 +57,8 @@ class QArmSimEnv:
     DARK_FLOOR_COLOR = (0.1, 0.1, 0.1, 1.0)
     LIGHT_FLOOR_COLOR = (0.8, 0.8, 0.8, 1.0)
     BACKDROP_COLOR = (0.85, 0.85, 0.85, 1.0)
-    GRIPPER_RELEASE_THRESHOLD = 0.03  # rad change to treat as intentional gripper motion
-    GRIPPER_RELEASE_TIME = 0.08  # seconds gripper must move past threshold to unlock hoop
+    GRIPPER_RELEASE_THRESHOLD = 0.0001  # rad change to treat as intentional gripper motion
+    GRIPPER_RELEASE_TIME = 0.005  # seconds gripper must move past threshold to unlock hoop
     HOLD_FORCE = 1  # small holding torque for light joints.
     HOLD_FORCE_STRONG = 4  # higher holding torque for primary arm joints.
 
@@ -119,9 +119,10 @@ class QArmSimEnv:
         self._active_hoop_constraint: int | None = None
         self._active_hoop_body: int | None = None
         self._last_gripper_joint_positions: list[float] | None = None
-        self._gripper_move_timer: float = 0.0
         self._hoop_collision_disabled: set[int] = set()
         self._active_hoop_info: dict[str, object] | None = None
+        self._gripper_move_timer: float = 0.0
+        self._hoop_release_cooldown: dict[int, float] = {}
 
         p.setTimeStep(self.time_step, physicsClientId=self.client)
         p.setGravity(0, 0, -9.81, physicsClientId=self.client)
@@ -207,7 +208,9 @@ class QArmSimEnv:
             if name in self.link_name_to_index
         ]
         self._gripper_control_indices = [
-            idx for idx in self.movable_joint_indices if "GRIPPER_JOINT" in self.joint_names[idx]
+            idx
+            for idx in self.movable_joint_indices
+            if self.joint_names[idx] in {"GRIPPER_JOINT1A", "GRIPPER_JOINT2A"}
         ]
 
         # Disable default motor torques so we can drive positions explicitly.
@@ -671,14 +674,15 @@ class QArmSimEnv:
                     )
             except Exception:
                 pass
+        is_hoop = "hoop" in mesh.name.lower()
         friction_kwargs = {
-            "lateralFriction": 1.4,
+            "lateralFriction": 0.35 if is_hoop else 1.4,
             "restitution": 0.0,
-            "rollingFriction": 0.04,
-            "spinningFriction": 0.04,
+            "rollingFriction": 0.005 if is_hoop else 0.04,
+            "spinningFriction": 0.005 if is_hoop else 0.04,
             "contactProcessingThreshold": 0.0,
-            "contactStiffness": 8e4,
-            "contactDamping": 6e3,
+            "contactStiffness": 6e4 if is_hoop else 8e4,
+            "contactDamping": 4e3 if is_hoop else 6e3,
         }
         if mass > 0.0:
             ccd_radius = 0.015  # higher minimum to help very small scaled meshes
@@ -794,58 +798,27 @@ class QArmSimEnv:
 
     # ---------- Hoop grasp/lock helpers ----------
     def _release_hoop_constraint(self) -> None:
+        pose: tuple[tuple[float, float, float], tuple[float, float, float, float]] | None = None
+        if self._active_hoop_body is not None:
+            try:
+                pose = p.getBasePositionAndOrientation(self._active_hoop_body, physicsClientId=self.client)
+            except Exception:
+                pose = None
         if self._active_hoop_constraint is not None:
             try:
                 p.removeConstraint(self._active_hoop_constraint, physicsClientId=self.client)
             except Exception:
                 pass
         if self._active_hoop_body is not None:
-            self._enable_hoop_collision(self._active_hoop_body)
-            # Nudge the hoop slightly out of the gripper to avoid interpenetration after unlock.
-            try:
-                hoop_pos, hoop_orn = p.getBasePositionAndOrientation(
-                    self._active_hoop_body, physicsClientId=self.client
-                )
-                offset_pos = hoop_pos
-                if self._active_hoop_info:
-                    normal = self._active_hoop_info.get("contact_normal", (0.0, 0.0, 1.0))
-                    parent_link = int(self._active_hoop_info.get("parent_link", -1))
-                    parent_local = self._active_hoop_info.get("parent_local")
-                    if parent_local is not None:
-                        if parent_link == -1:
-                            parent_world_pos, parent_world_orn = p.getBasePositionAndOrientation(
-                                self.robot_id, physicsClientId=self.client
-                            )
-                        else:
-                            state = p.getLinkState(
-                                self.robot_id,
-                                parent_link,
-                                computeForwardKinematics=True,
-                                physicsClientId=self.client,
-                            )
-                            parent_world_pos, parent_world_orn = state[4], state[5]
-                        world_contact, _ = p.multiplyTransforms(
-                            parent_world_pos,
-                            parent_world_orn,
-                            parent_local,
-                            [0, 0, 0, 1],
-                        )
-                        nx, ny, nz = normal
-                        norm = math.sqrt(nx * nx + ny * ny + nz * nz)
-                        scale = 0.02 / norm if norm > 1e-6 else 0.0
-                        offset_pos = (
-                            world_contact[0] + nx * scale,
-                            world_contact[1] + ny * scale,
-                            world_contact[2] + nz * scale,
-                        )
-                p.resetBasePositionAndOrientation(
-                    self._active_hoop_body,
-                    offset_pos,
-                    hoop_orn,
-                    physicsClientId=self.client,
-                )
-            except Exception:
-                pass
+            hoop_id = self._active_hoop_body
+            # Keep collisions disabled during a short cooldown to avoid immediate re-collision.
+            self._disable_hoop_collision(hoop_id)
+            self._hoop_release_cooldown[hoop_id] = 0.2
+            if pose is not None:
+                try:
+                    p.resetBasePositionAndOrientation(hoop_id, pose[0], pose[1], physicsClientId=self.client)
+                except Exception:
+                    pass
         self._active_hoop_constraint = None
         self._active_hoop_body = None
         self._active_hoop_info = None
@@ -863,6 +836,14 @@ class QArmSimEnv:
         """Lock a hoop to the gripper if both B links contact it for >0.5s; release on gripper motion."""
         if not self._hoop_body_ids or not self._gripper_b_links:
             return
+        # Handle release grace periods: re-enable collisions once cooldown elapses.
+        for hoop_id in list(self._hoop_release_cooldown.keys()):
+            remaining = self._hoop_release_cooldown[hoop_id] - dt
+            if remaining <= 0.0:
+                self._enable_hoop_collision(hoop_id)
+                self._hoop_release_cooldown.pop(hoop_id, None)
+            else:
+                self._hoop_release_cooldown[hoop_id] = remaining
         # If locked, drop when gripper joints move.
         current_grip = self._gripper_joint_positions()
         if self._active_hoop_constraint is not None:
@@ -925,7 +906,12 @@ class QArmSimEnv:
                             childFrameOrientation=[0.0, 0.0, 0.0, 1.0],
                             physicsClientId=self.client,
                         )
-                        p.changeConstraint(cid, maxForce=120.0, physicsClientId=self.client)
+                        p.changeConstraint(
+                            cid,
+                            maxForce=400.0,
+                            erp=0.2,
+                            physicsClientId=self.client,
+                        )
                         self._active_hoop_constraint = cid
                         self._active_hoop_body = hoop_id
                         self._active_hoop_info = {
