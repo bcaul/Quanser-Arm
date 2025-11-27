@@ -19,6 +19,15 @@ Edit the defaults near the top of `student_main.py` if you want a longer run, di
 - Cycles through a handful of joint-space waypoints in the order `(yaw, shoulder, elbow, wrist)`.
 - Keeps looping until the default duration expires.
 
+## Use an Xbox controller
+
+- Install deps with `pip install -e .` (pulls in `pygame` for joystick polling).
+- Plug in/pair your controller and run `python -m student_template.student_main`.
+- Default mapping: left stick X → yaw, left stick Y → shoulder, right stick Y → elbow, right trigger → gripper (1A/2A). Stick inputs are square-bounded so diagonals still hit full range.
+- Stick extremes map to absolute angles (center = 0 rad; edges ≈ ±360° for arm joints, ≈ ±120° for the gripper, clamped to URDF limits). One gripper side is inverted so positive X closes the jaws symmetrically.
+- Tweak `USE_GAMEPAD_CONTROL`, `JOYSTICK_AXES`, `JOINT_TARGET_RANGE_RAD`, `GRIPPER_TARGET_RANGE_RAD`, and `GAMEPAD_DEADZONE` near the top of `student_main.py` if your axis order differs or you want different ranges.
+- Want the same teleop plus preloaded meshes? Try `python -m student_template.student_gamepad_object`, a gamepad-enabled clone of `student_object.py` that spawns the hoop/monkey/dog/head meshes.
+
 ## API
 
 - `get_joint_positions()` → list of joint angles `(yaw, shoulder, elbow, wrist)`

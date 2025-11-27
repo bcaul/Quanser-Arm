@@ -8,6 +8,7 @@ dependencies = [
     "pybullet",
     "numpy",
     "panda3d",
+    "pygame",
 ]
 
 [build-system]
