@@ -44,7 +44,8 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 JOYSTICK_AXES = {"left_x": 0, "left_y": 1, "right_x": 2, "right_y": 3}
 JOYSTICK_BUTTONS = {"left_bumper": 9, "right_bumper": 10}
 GAMEPAD_DEADZONE = 0.1
-JOINT_SPEEDS = {"yaw": 1.4, "shoulder": 1.0, "elbow": 1.2, "wrist": 1.0}
+STICK_RESPONSE_EXP = 1.6  # >1: slow near center, faster toward the edge
+JOINT_SPEEDS = {"yaw": 1.5, "shoulder": 1.5, "elbow": 1.5, "wrist": 1.5}
 GRIPPER_OPEN_ANGLE = 0.0
 GRIPPER_CLOSED_ANGLE = 0.55
 GRIPPER_SPEED = 1.5  # rad/s when a bumper is held
@@ -64,6 +65,16 @@ def square_stick(x: float, y: float, deadzone: float) -> tuple[float, float]:
     max_component = max(abs(x), abs(y), 1e-6)
     scale = radius / max_component
     return clamp(x * scale, (-1.0, 1.0)), clamp(y * scale, (-1.0, 1.0))
+
+
+def apply_response_curve(x: float, y: float, exp: float) -> tuple[float, float]:
+    """Non-linear response so speed ramps up as the stick moves farther from center."""
+    def shape(v: float) -> float:
+        if v == 0.0:
+            return 0.0
+        mag = abs(v) ** exp
+        return math.copysign(mag, v)
+    return shape(x), shape(y)
 
 
 class XboxController:
@@ -102,6 +113,8 @@ class XboxController:
         ry = float(self.joy.get_axis(JOYSTICK_AXES["right_y"])) - self._zero["right_y"]
         lx, ly = square_stick(lx, -ly, GAMEPAD_DEADZONE)  # invert Y so forward is positive
         rx, ry = square_stick(rx, -ry, GAMEPAD_DEADZONE)
+        lx, ly = apply_response_curve(lx, ly, STICK_RESPONSE_EXP)
+        rx, ry = apply_response_curve(rx, ry, STICK_RESPONSE_EXP)
         buttons = {
             "left_bumper": int(self.joy.get_button(JOYSTICK_BUTTONS["left_bumper"])),
             "right_bumper": int(self.joy.get_button(JOYSTICK_BUTTONS["right_bumper"])),

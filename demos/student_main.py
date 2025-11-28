@@ -29,6 +29,8 @@ TIME_STEP = 1.0 / 240.0
 PAUSE_BETWEEN_MOVES = 1.0
 SHOW_VIEWER_SLIDERS = False
 RELOAD_MESHES = False
+GRIPPER_OPEN_ANGLE = 0.0
+GRIPPER_CLOSED_ANGLE = 0.55
 
 WAYPOINTS: list[tuple[str, tuple[float, float, float, float]]] = [
     ("Reach forward", (0.0, 0.45, 0.25, 0.0)),
@@ -75,10 +77,10 @@ def _play_motion(arm: QArmBase) -> None:
         time.sleep(PAUSE_BETWEEN_MOVES)
 
     print("[Student] Opening gripper")
-    arm.open_gripper()
+    arm.set_gripper_position(GRIPPER_OPEN_ANGLE)
     time.sleep(GRIPPER_PAUSE_S)
     print("[Student] Closing gripper")
-    arm.close_gripper()
+    arm.set_gripper_position(GRIPPER_CLOSED_ANGLE)
     time.sleep(GRIPPER_PAUSE_S)
 
 

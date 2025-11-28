@@ -45,6 +45,9 @@ SEQUENCE: list[tuple[str, str]] = [
     ("Return home", "home"),
 ]
 
+GRIPPER_OPEN_ANGLE = 0.0
+GRIPPER_CLOSED_ANGLE = 0.55
+
 
 def go_to(arm: QArmBase, pose_name: str, wait: float) -> None:
     pose = POSES[pose_name]
@@ -58,10 +61,10 @@ def run_sequence(arm: QArmBase) -> None:
     for action, target in SEQUENCE:
         if target == "open":
             print("[PickPlace] Opening gripper")
-            arm.open_gripper()
+            arm.set_gripper_position(GRIPPER_OPEN_ANGLE)
         elif target == "close":
             print("[PickPlace] Closing gripper")
-            arm.close_gripper()
+            arm.set_gripper_position(GRIPPER_CLOSED_ANGLE)
         else:
             go_to(arm, target, STEP_DELAY_S)
         time.sleep(STEP_DELAY_S)

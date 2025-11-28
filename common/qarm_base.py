@@ -67,16 +67,6 @@ class QArmBase(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
-    def open_gripper(self) -> None:
-        """Open the gripper."""
-        raise NotImplementedError
-
-    @abstractmethod
-    def close_gripper(self) -> None:
-        """Close the gripper."""
-        raise NotImplementedError
-
     def move_ee_to(self, target_pos: Sequence[float]) -> None:
         """
         Optional helper: move the end-effector to a target position.

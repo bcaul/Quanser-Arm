@@ -27,6 +27,8 @@ USE_PYBULLET_GUI = False
 DELTA_RAD = 0.1  # ~5.7 degrees per tap
 
 JOINT_INDEX = {name: i for i, name in enumerate(DEFAULT_JOINT_ORDER)}
+GRIPPER_OPEN_ANGLE = 0.0
+GRIPPER_CLOSED_ANGLE = 0.55
 
 COMMANDS: dict[str, tuple[str, float]] = {
     "q": ("yaw", +DELTA_RAD),
@@ -90,9 +92,9 @@ def main() -> None:
                 target, value = action
                 if target == "gripper":
                     if value > 0:
-                        arm.open_gripper()
+                        arm.set_gripper_position(GRIPPER_OPEN_ANGLE)
                     else:
-                        arm.close_gripper()
+                        arm.set_gripper_position(GRIPPER_CLOSED_ANGLE)
                 elif target == "home":
                     arm.home()
                 elif target == "print":

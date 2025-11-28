@@ -42,12 +42,6 @@ class RealQArm(QArmBase):
     def set_gripper_positions(self, angles: Sequence[float]) -> None:
         self._not_ready("set_gripper_positions")
 
-    def open_gripper(self) -> None:
-        self._not_ready("open_gripper")
-
-    def close_gripper(self) -> None:
-        self._not_ready("close_gripper")
-
     def _not_ready(self, call: str) -> None:
         raise NotImplementedError(
             f"RealQArm.{call} requires the Quanser hardware SDK and a connected robot. "

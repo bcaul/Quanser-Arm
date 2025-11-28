@@ -103,14 +103,6 @@ class SimQArm(QArmBase):
         """Return current arm joint angles (radians) in the default order."""
         return self.env.get_joint_positions(self.joint_order)
 
-    def open_gripper(self) -> None:
-        """Open the gripper to the default open angle."""
-        self.set_gripper_position(self._open_angle)
-
-    def close_gripper(self) -> None:
-        """Close the gripper to the default closed angle."""
-        self.set_gripper_position(self._closed_angle)
-
     def set_gripper_positions(self, angles: Sequence[float] | float) -> None:
         """
         Drive the gripper with explicit joint targets.
