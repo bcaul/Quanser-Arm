@@ -214,6 +214,11 @@ class PhysicsBridge:
             raise ValueError(f"Expected {len(self.joint_order)} joint values, got {len(values)}")
         self.env.set_joint_positions(values)
 
+    def get_joint_positions(self, indices: List[int] | None = None) -> List[float]:
+        """Return current joint angles (rad) for the given indices or all movable joints."""
+        target_indices = indices if indices is not None else self.joint_order
+        return list(self.env.get_joint_positions(target_indices))
+
     def set_locked_joint(self, joint_idx: int, value: float) -> None:
         """Update a locked joint hold position if supported by the env."""
         if hasattr(self.env, "set_locked_joint_value"):
@@ -221,6 +226,15 @@ class PhysicsBridge:
                 self.env.set_locked_joint_value(joint_idx, value)  # type: ignore[arg-type]
             except Exception:
                 pass
+
+    def get_active_hoop_info(self) -> Dict[str, object] | None:
+        """Expose current locked hoop info from the environment."""
+        if hasattr(self.env, "get_active_hoop_info"):
+            try:
+                return self.env.get_active_hoop_info()  # type: ignore[call-arg]
+            except Exception:
+                return None
+        return None
 
     def _link_pose(self, body_id: int, link_idx: int) -> Tuple[Tuple[float, float, float], Tuple[float, float, float, float]]:
         if link_idx == -1:
@@ -320,6 +334,7 @@ class PandaArmViewer(ShowBase):
         self.reload_meshes = getattr(args, "reload_meshes", False)
         self.base_yaw_deg = self.base_assets.yaw_deg
         self.base_mesh_scale = self.base_assets.visual_scale
+        self.idx_to_name: Dict[int, str] = {idx: name for name, idx in self.physics.link_name_to_index.items()}
         # Grid sizing (edit here if you want different spans).
         self.grid_step = 0.1
         self.grid_x_neg_cells = 4
@@ -343,6 +358,11 @@ class PandaArmViewer(ShowBase):
         self.kinematic_body_nodes: List[Tuple[int, NodePath]] = []
         self.joint_sliders: List[DirectSlider] = []
         self.locked_sliders: List[Tuple[int, DirectSlider]] = []
+        self.joint_labels: List[Tuple["DirectLabel", int]] = []
+        self.locked_labels: List[Tuple["DirectLabel", int]] = []
+        self.lock_status_label: DirectLabel | None = None
+        self._locked_hoop_body: int | None = None
+        self._hoop_original_colors: Dict[int, Vec4] = {}
         self.fps_label: DirectLabel | None = None
         self.filters: CommonFilters | None = None
 
@@ -350,6 +370,7 @@ class PandaArmViewer(ShowBase):
         self._setup_static_meshes()
         self._setup_kinematic_objects()
         self._setup_models()
+        self._setup_lock_status()
         if self.show_sliders:
             self._setup_ui()
         self._bind_controls()
@@ -549,7 +570,8 @@ class PandaArmViewer(ShowBase):
                 pos=(x, 0, y),
                 command=self._on_joint_slider_change,
             )
-            label = DirectLabel(
+            # Slider width is ~0.6 in X at scale=0.3; bump the value label just to the right.
+            name_label = DirectLabel(
                 text=name,
                 scale=0.05,
                 pos=(x - 0.45, 0, y + 0.02),
@@ -557,8 +579,18 @@ class PandaArmViewer(ShowBase):
                 text_fg=(1, 1, 1, 1),
                 text_align=TextNode.ALeft,
             )
-            label.reparentTo(self.aspect2d)
+            name_label.reparentTo(self.aspect2d)
+            value_label = DirectLabel(
+                text="0.00 rad",
+                scale=0.05,
+                pos=(x + 0.36, 0, y + 0.02),
+                frameColor=(0, 0, 0, 0),
+                text_fg=(0.5, 1.0, 0.5, 1.0),
+                text_align=TextNode.ALeft,
+            )
+            value_label.reparentTo(self.aspect2d)
             self.joint_sliders.append(slider)
+            self.joint_labels.append((value_label, i))
             name_to_idx[name] = i
             name_to_limits[name] = (lower, upper)
             y -= 0.12
@@ -607,7 +639,7 @@ class PandaArmViewer(ShowBase):
                     pos=(x, 0, y),
                     command=self._on_locked_slider_change,
                 )
-                label = DirectLabel(
+                name_label = DirectLabel(
                     text=f"{name} (locked)",
                     scale=0.05,
                     pos=(x - 0.45, 0, y + 0.02),
@@ -615,8 +647,18 @@ class PandaArmViewer(ShowBase):
                     text_fg=(1, 1, 1, 1),
                     text_align=TextNode.ALeft,
                 )
-                label.reparentTo(self.aspect2d)
+                name_label.reparentTo(self.aspect2d)
+                value_label = DirectLabel(
+                    text=f"{val:.2f} rad",
+                    scale=0.05,
+                    pos=(x + 0.36, 0, y + 0.02),
+                    frameColor=(0, 0, 0, 0),
+                    text_fg=(0.5, 1.0, 0.5, 1.0),
+                    text_align=TextNode.ALeft,
+                )
+                value_label.reparentTo(self.aspect2d)
                 self.locked_sliders.append((joint_idx, slider))
+                self.locked_labels.append((value_label, joint_idx))
                 y -= 0.12
 
         # Reset hoops button (bottom-right).
@@ -637,6 +679,20 @@ class PandaArmViewer(ShowBase):
             btn.setBin("fixed", 100)
         except Exception:
             pass
+
+    def _setup_lock_status(self) -> None:
+        """Overlay label showing current hoop lock status."""
+        try:
+            self.lock_status_label = DirectLabel(
+                text="Hoop lock: none",
+                scale=0.06,
+                pos=(-1.25, 0, 0.92),
+                frameColor=(0, 0, 0, 0),
+                text_fg=(1, 1, 1, 1),
+                text_align=TextNode.ALeft,
+            )
+        except Exception:
+            self.lock_status_label = None
 
     def _bind_controls(self) -> None:
         self.accept("escape", self._quit)
@@ -674,6 +730,9 @@ class PandaArmViewer(ShowBase):
         if not self.paused:
             self.physics.step()
         self._sync_models()
+        self._update_lock_status()
+        if self.show_sliders:
+            self._update_joint_labels()
         self._handle_mouse()
         self._update_camera()
         self._update_fps(task.dt)
@@ -708,6 +767,68 @@ class PandaArmViewer(ShowBase):
             return
         fps = 1.0 / dt
         self.fps_label["text"] = f"FPS: {fps:5.1f}"
+
+    def _update_joint_labels(self) -> None:
+        """Refresh slider labels with current joint angles."""
+        if not (self.joint_labels or self.locked_labels):
+            return
+        try:
+            joint_values = self.physics.get_joint_positions()
+        except Exception:
+            joint_values = []
+        for value_label, idx in self.joint_labels:
+            if idx < len(joint_values):
+                value_label["text"] = f"{joint_values[idx]:+.2f} rad"
+        if self.locked_labels:
+            indices = [idx for _, idx in self.locked_labels]
+            locked_values: Dict[int, float] = {}
+            try:
+                vals = self.physics.get_joint_positions(indices=indices)
+                for joint_idx, val in zip(indices, vals):
+                    locked_values[joint_idx] = val
+            except Exception:
+                pass
+            for value_label, joint_idx in self.locked_labels:
+                if joint_idx in locked_values:
+                    value_label["text"] = f"{locked_values[joint_idx]:+.2f} rad"
+
+    def _update_lock_status(self) -> None:
+        """Update lock overlay and highlight the locked hoop."""
+        info = self.physics.get_active_hoop_info()
+        hoop_id = info.get("hoop_body_id") if info else None
+        # Restore previous hoop color if lock changed.
+        if self._locked_hoop_body is not None and self._locked_hoop_body != hoop_id:
+            node = next((n for bid, n in self.kinematic_body_nodes if bid == self._locked_hoop_body), None)
+            if node and self._locked_hoop_body in self._hoop_original_colors:
+                try:
+                    node.setColor(self._hoop_original_colors[self._locked_hoop_body])
+                except Exception:
+                    pass
+            self._locked_hoop_body = None
+
+        if self.lock_status_label is None:
+            return
+        if hoop_id is None:
+            self.lock_status_label["text"] = "Hoop lock: none"
+            self.lock_status_label["text_fg"] = (1, 1, 1, 1)
+            return
+
+        parent_link = info.get("parent_link") if info else None
+        link_name = self.idx_to_name.get(int(parent_link), "") if parent_link is not None else ""
+        self.lock_status_label["text"] = f"Hoop lock: {hoop_id} via {link_name or 'gripper'}"
+        self.lock_status_label["text_fg"] = (0.5, 1.0, 0.5, 1.0)
+        self._locked_hoop_body = hoop_id
+        node = next((n for bid, n in self.kinematic_body_nodes if bid == hoop_id), None)
+        if node:
+            if hoop_id not in self._hoop_original_colors:
+                try:
+                    self._hoop_original_colors[hoop_id] = node.getColor()
+                except Exception:
+                    self._hoop_original_colors[hoop_id] = Vec4(1, 1, 1, 1)
+            try:
+                node.setColor(Vec4(0.4, 1.0, 0.4, 1.0))
+            except Exception:
+                pass
 
     def _create_grid(self) -> None:
         """Grid sized by per-axis cell counts and step."""

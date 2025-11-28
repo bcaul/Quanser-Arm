@@ -57,8 +57,9 @@ class QArmSimEnv:
     DARK_FLOOR_COLOR = (0.1, 0.1, 0.1, 1.0)
     LIGHT_FLOOR_COLOR = (0.8, 0.8, 0.8, 1.0)
     BACKDROP_COLOR = (0.85, 0.85, 0.85, 1.0)
-    GRIPPER_RELEASE_THRESHOLD = 0.0001  # rad change to treat as intentional gripper motion
-    GRIPPER_RELEASE_TIME = 0.005  # seconds gripper must move past threshold to unlock hoop
+    # Revert to tighter release detection; rely on lock grace period to ignore initial jitter.
+    GRIPPER_RELEASE_THRESHOLD = 0.0001  # radians of motion before starting release timer
+    GRIPPER_RELEASE_TIME = 0.005  # seconds gripper must exceed threshold to unlock hoop
     HOLD_FORCE = 1  # small holding torque for light joints.
     HOLD_FORCE_STRONG = 4  # higher holding torque for primary arm joints.
 
@@ -123,6 +124,7 @@ class QArmSimEnv:
         self._active_hoop_info: dict[str, object] | None = None
         self._gripper_move_timer: float = 0.0
         self._hoop_release_cooldown: dict[int, float] = {}
+        self._hoop_lock_grace: float = 0.0
 
         p.setTimeStep(self.time_step, physicsClientId=self.client)
         p.setGravity(0, 0, -9.81, physicsClientId=self.client)
@@ -737,10 +739,10 @@ class QArmSimEnv:
         is_hoop = "hoop" in mesh.name.lower()
         friction_kwargs = {
             # Hoops get higher friction to avoid sliding off stands too easily.
-            "lateralFriction": 0.6 if is_hoop else 1.4,
+            "lateralFriction": 0.8 if is_hoop else 1.4,
             "restitution": 0.0,
-            "rollingFriction": 0.02 if is_hoop else 0.04,
-            "spinningFriction": 0.02 if is_hoop else 0.04,
+            "rollingFriction": 0.03 if is_hoop else 0.04,
+            "spinningFriction": 0.03 if is_hoop else 0.04,
             "contactProcessingThreshold": 0.0,
             "contactStiffness": 8e4 if is_hoop else 8e4,
             "contactDamping": 6e3 if is_hoop else 6e3,
@@ -894,7 +896,7 @@ class QArmSimEnv:
             return []
 
     def _update_hoop_grasp(self, dt: float) -> None:
-        """Lock a hoop to the gripper if both B links contact it for >0.5s; release on gripper motion."""
+        """Lock a hoop to the gripper if any B link maintains contact; release on gripper motion."""
         if not self._hoop_body_ids or not self._gripper_b_links:
             return
         # Handle release grace periods: re-enable collisions once cooldown elapses.
@@ -908,6 +910,11 @@ class QArmSimEnv:
         # If locked, drop when gripper joints move.
         current_grip = self._gripper_joint_positions()
         if self._active_hoop_constraint is not None:
+            # Ignore small gripper motion immediately after lock to avoid accidental drops.
+            if self._hoop_lock_grace > 0.0:
+                self._hoop_lock_grace = max(0.0, self._hoop_lock_grace - dt)
+                self._last_gripper_joint_positions = current_grip
+                return
             if self._last_gripper_joint_positions and current_grip:
                 delta = max(abs(a - b) for a, b in zip(current_grip, self._last_gripper_joint_positions))
                 if delta > self.GRIPPER_RELEASE_THRESHOLD:
@@ -929,11 +936,12 @@ class QArmSimEnv:
 
         for hoop_id in list(self._hoop_body_ids):
             contacts = p.getContactPoints(bodyA=self.robot_id, bodyB=hoop_id, physicsClientId=self.client)
-            links_hit = {c[3] for c in contacts if c[3] in self._gripper_b_links}
-            if set(self._gripper_b_links).issubset(links_hit) and contacts:
+            b_link_contacts = [c for c in contacts if c[3] in self._gripper_b_links]
+            links_hit = {c[3] for c in b_link_contacts}
+            if set(self._gripper_b_links).issubset(links_hit) and b_link_contacts:
                 self._hoop_contact_timer[hoop_id] = self._hoop_contact_timer.get(hoop_id, 0.0) + dt
-                if self._hoop_contact_timer[hoop_id] >= 0.5:
-                    c = contacts[0]
+                if self._hoop_contact_timer[hoop_id] >= 0.05:
+                    c = b_link_contacts[0]
                     parent_link = c[3]
                     child_link = c[4]
                     pos_on_a = c[5]
@@ -983,12 +991,22 @@ class QArmSimEnv:
                             "contact_normal": c[7] if len(c) > 7 else (0.0, 0.0, 1.0),
                         }
                         self._disable_hoop_collision(hoop_id)
+                        # Short grace window to ignore immediate gripper jitter after lock.
+                        self._hoop_lock_grace = 0.2
                     except Exception:
                         pass
                     self._hoop_contact_timer[hoop_id] = 0.0
                     break
             else:
                 self._hoop_contact_timer[hoop_id] = 0.0
+
+    def get_active_hoop_info(self) -> dict[str, object] | None:
+        """Return info about the currently locked hoop (if any)."""
+        if self._active_hoop_body is None or self._active_hoop_info is None:
+            return None
+        info = dict(self._active_hoop_info)
+        info["hoop_body_id"] = self._active_hoop_body
+        return info
 
     def _disable_hoop_collision(self, hoop_id: int) -> None:
         """Disable collisions between the hoop and the robot while locked."""
