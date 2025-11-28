@@ -1,8 +1,7 @@
 """Keyboard teleop with multiple segmented hoops (sliders + labels).
 
 Run: ``python -m demos.gamepad_multi_hoops``
-Set ``MODE = "hardware"`` + ``MIRROR_SIM_WHEN_HARDWARE = True`` to drive the
-real arm while keeping the simulation/viewer in sync.
+Set ``MODE = "mirror"`` to drive the real arm while keeping the simulation/viewer in sync.
 """
 
 from __future__ import annotations
@@ -19,8 +18,7 @@ from common.qarm_base import QArmBase
 from demos._shared import run_with_viewer
 
 # ---- user settings ----
-MODE = "hardware"  # change to "hardware" to drive the real arm
-MIRROR_SIM_WHEN_HARDWARE = True  # keep the simulation/viewer running alongside hardware
+MODE = "mirror"  # change to "mirror" to drive hardware while mirroring into the simulator
 USE_PANDA_VIEWER = True
 USE_PYBULLET_GUI = False
 STEP_S = 0.02
@@ -304,26 +302,35 @@ def start_live_hoop_labels(arm: QArmBase, hoop_ids: list[int], stop_event: threa
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="QArm keyboard hoops demo")
-    parser.add_argument("--mode", choices=["sim", "hardware"], default=MODE, help="QArm control backend")
+    parser.add_argument(
+        "--mode",
+        choices=["sim", "hardware", "mirror"],
+        default=MODE,
+        help="Control backend: 'sim', 'hardware', or 'mirror' (hardware + mirrored sim)",
+    )
     parser.add_argument("--no-viewer", action="store_true", help="Disable Panda viewer (headless)")
     parser.add_argument("--pybullet-gui", action="store_true", help="Force PyBullet GUI on")
-    parser.add_argument("--mirror-sim", action="store_true", default=MIRROR_SIM_WHEN_HARDWARE, help="Mirror hardware commands into sim")
     args = parser.parse_args()
 
     mode = args.mode.lower()
+    mirror_mode = mode == "mirror"
+    effective_mode = "hardware" if mirror_mode else mode
     use_viewer = USE_PANDA_VIEWER and not args.no_viewer
     auto_step = not use_viewer
-    mirror_sim = args.mirror_sim and mode == "hardware"
+    mirror_sim = mirror_mode
     gui = args.pybullet_gui or USE_PYBULLET_GUI
 
     arm = make_qarm(
-        mode=mode,
+        mode=effective_mode,
         gui=gui,
         real_time=False,
         auto_step=auto_step,
         mirror_sim=mirror_sim,
     )
-    print(f"[KeyboardHoops] Mode: {mode} (mirror sim: {'on' if mirror_sim else 'off'}) viewer={'on' if use_viewer else 'off'} gui={'pybullet' if gui else 'none'}")
+    print(
+        f"[KeyboardHoops] Mode: {mode} (mirror sim: {'on' if mirror_sim else 'off'}) "
+        f"viewer={'on' if use_viewer else 'off'} gui={'pybullet' if gui else 'none'}"
+    )
     arm.home()
     lock_gripper_b_joints(getattr(arm, "env", None))
     hoop_ids = add_hoops(arm)

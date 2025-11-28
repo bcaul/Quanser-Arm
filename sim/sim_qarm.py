@@ -56,8 +56,12 @@ class SimQArm(QArmBase):
         self._gripper_joint_indices = (
             list(getattr(self.env, "_gripper_control_indices", [])) or self._detect_gripper_joints()
         )
+        locked_joint_indices = set(getattr(self.env, "locked_joint_indices", []))
+        # Keep arm joints to driven DOFs only; drop gripper control + locked B joints.
         self._arm_joint_indices: list[int] = [
-            idx for idx in self.env.movable_joint_indices if idx not in self._gripper_joint_indices
+            idx
+            for idx in self.env.movable_joint_indices
+            if idx not in self._gripper_joint_indices and idx not in locked_joint_indices
         ]
         if not self._arm_joint_indices:
             raise RuntimeError("No movable joints found in the simulation.")
