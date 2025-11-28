@@ -49,20 +49,29 @@ class SimQArm(QArmBase):
         if self.env.robot_id is None:
             raise RuntimeError("Simulation did not load a robot; cannot control QArm.")
 
-        self.joint_order: list[int] = list(self.env.movable_joint_indices)
-        if not self.joint_order:
+        self._env_index_to_pos: dict[int, int] = {
+            idx: i for i, idx in enumerate(self.env.movable_joint_indices)
+        }
+        self._gripper_joint_indices = self._detect_gripper_joints()
+        self._arm_joint_indices: list[int] = [
+            idx for idx in self.env.movable_joint_indices if idx not in self._gripper_joint_indices
+        ]
+        if not self._arm_joint_indices:
             raise RuntimeError("No movable joints found in the simulation.")
+        self.joint_order: list[int] = list(self._arm_joint_indices)
         self.joint_names: list[str] = [self.env.joint_names[idx] for idx in self.joint_order]
-        self.joint_name_hint: tuple[str, ...] = DEFAULT_JOINT_ORDER
+        self.joint_name_hint: tuple[str, ...] = DEFAULT_JOINT_ORDER  # yaw, shoulder, elbow, wrist
         self._home_pose = self._validate_home_pose(home_pose)
         self._auto_step = bool(auto_step)
-        self._joint_index_to_pos = {idx: i for i, idx in enumerate(self.joint_order)}
-        self._gripper_joint_indices = self._detect_gripper_joints()
         self._gripper_limits = self._query_gripper_limits()
 
     def home(self) -> None:
         """Reset the arm to its configured home pose."""
-        self.env.reset(self._home_pose)
+        full_home = [0.0] * len(self.env.movable_joint_indices)
+        for idx, angle in zip(self._arm_joint_indices, self._home_pose):
+            pos = self._env_index_to_pos[idx]
+            full_home[pos] = angle
+        self.env.reset(full_home)
         self._maybe_step()
 
     def set_joint_positions(self, q: Sequence[float]) -> None:
@@ -70,13 +79,18 @@ class SimQArm(QArmBase):
         Command the arm joints in the same order as :attr:`joint_order`.
         """
         targets = list(q)
-        if len(targets) != len(self.joint_order):
-            raise ValueError(f"Expected {len(self.joint_order)} joint targets, got {len(targets)}")
-        self.env.set_joint_positions(targets)
+        expected = len(self.joint_order)
+        if len(targets) != expected:
+            raise ValueError(f"Expected {expected} joint targets, got {len(targets)}")
+        full_targets = self.env.get_joint_positions()  # includes gripper joints
+        for idx, angle in zip(self.joint_order, targets):
+            pos = self._env_index_to_pos[idx]
+            full_targets[pos] = angle
+        self.env.set_joint_positions(full_targets)
         self._maybe_step()
 
     def get_joint_positions(self) -> list[float]:
-        """Return current joint angles (radians) in simulation order."""
+        """Return current arm joint angles (radians) in the default order."""
         return self.env.get_joint_positions(self.joint_order)
 
     def open_gripper(self) -> None:
@@ -111,7 +125,7 @@ class SimQArm(QArmBase):
     def _detect_gripper_joints(self) -> list[int]:
         """Heuristic: look for movable joints with 'grip' or 'finger' in their names."""
         candidates: list[int] = []
-        for idx in self.joint_order:
+        for idx in self.env.movable_joint_indices:
             name = self.env.joint_names[idx].lower()
             if "grip" in name or "finger" in name:
                 candidates.append(idx)
@@ -134,11 +148,10 @@ class SimQArm(QArmBase):
             raise NotImplementedError(
                 "Gripper control is not available in this simulation (no gripper joints found in the URDF)."
             )
-        current = self.get_joint_positions()
-        targets = list(current)
+        targets = self.env.get_joint_positions()  # full list (arm + gripper)
         desired = self._gripper_targets(open_state=open_state)
         for joint_idx, target_value in desired.items():
-            pos = self._joint_index_to_pos[joint_idx]
+            pos = self._env_index_to_pos[joint_idx]
             targets[pos] = target_value
         self.env.set_joint_positions(targets)
         self._maybe_step()
@@ -147,11 +160,17 @@ class SimQArm(QArmBase):
         """Compute per-joint targets for opening/closing the gripper."""
         targets: dict[int, float] = {}
         for idx in self._gripper_joint_indices:
-            lower, upper = self._gripper_limits.get(idx, (0.0, 0.0))
-            if upper > lower:
-                targets[idx] = upper if open_state else lower
+            name = self.env.joint_names[idx].upper()
+            if name == "GRIPPER_JOINT1A":
+                targets[idx] = 0.0 if open_state else -0.5
+            elif name == "GRIPPER_JOINT2A":
+                targets[idx] = 0.0 if open_state else 0.5
             else:
-                targets[idx] = 0.04 if open_state else 0.0
+                lower, upper = self._gripper_limits.get(idx, (0.0, 0.0))
+                if upper > lower:
+                    targets[idx] = upper if open_state else lower
+                else:
+                    targets[idx] = 0.04 if open_state else 0.0
         return targets
 
     def _maybe_step(self) -> None:

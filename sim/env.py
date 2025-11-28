@@ -218,7 +218,10 @@ class QArmSimEnv:
         ]
         self._joint_index_to_pos = {idx: i for i, idx in enumerate(self.movable_joint_indices)}
         # Lock gripper joints 1B/2B so they stay static in the simulation.
-        self._lock_joint_by_name({"GRIPPER_JOINT1B", "GRIPPER_JOINT2B"})
+        # Default to asymmetrical angles to mirror the physical gripper layout.
+        self._lock_joint_by_name(
+            {"GRIPPER_JOINT1B": 0.8, "GRIPPER_JOINT2B": -0.8}
+        )
         self._gripper_b_links = [
             self.link_name_to_index[name]
             for name in ("GRIPPER_LINK1B", "GRIPPER_LINK2B")
@@ -585,6 +588,12 @@ class QArmSimEnv:
         mass: float = 0.0,
         force_convex_for_dynamic: bool = True,
         align_aabb_center: bool = False,
+        lateral_friction: float | None = None,
+        rolling_friction: float | None = None,
+        spinning_friction: float | None = None,
+        restitution: float | None = None,
+        contact_stiffness: float | None = None,
+        contact_damping: float | None = None,
     ) -> int:
         """
         Spawn a static (mass=0) mesh in the scene and return its PyBullet body id.
@@ -762,6 +771,18 @@ class QArmSimEnv:
             "contactStiffness": 8e4 if is_hoop else 8e4,
             "contactDamping": 6e3 if is_hoop else 6e3,
         }
+        if lateral_friction is not None:
+            friction_kwargs["lateralFriction"] = float(lateral_friction)
+        if rolling_friction is not None:
+            friction_kwargs["rollingFriction"] = float(rolling_friction)
+        if spinning_friction is not None:
+            friction_kwargs["spinningFriction"] = float(spinning_friction)
+        if restitution is not None:
+            friction_kwargs["restitution"] = float(restitution)
+        if contact_stiffness is not None:
+            friction_kwargs["contactStiffness"] = float(contact_stiffness)
+        if contact_damping is not None:
+            friction_kwargs["contactDamping"] = float(contact_damping)
         if mass > 0.0:
             ccd_radius = 0.015  # higher minimum to help very small scaled meshes
             try:
@@ -874,19 +895,32 @@ class QArmSimEnv:
         """Return a shallow copy of stored point labels."""
         return list(self.point_labels)
 
-    def _lock_joint_by_name(self, names: set[str]) -> None:
-        """Record the current position of any movable joints whose names appear in `names`."""
+    def _lock_joint_by_name(self, names: set[str] | dict[str, float]) -> None:
+        """
+        Record the current position (or an override) for movable joints whose names appear in `names`.
+
+        Accepts either a set of names (locks at current position) or a dict[name -> lock_value].
+        """
         if not names or self.robot_id is None:
             return
+        if isinstance(names, set):
+            name_to_value: dict[str, float] = {n: math.nan for n in names}
+        else:
+            name_to_value = dict(names)
         for idx in self.movable_joint_indices:
             name = self.joint_names[idx]
-            if name not in names:
+            if name not in name_to_value:
                 continue
-            try:
-                state = p.getJointState(self.robot_id, idx, physicsClientId=self.client)
-                lock_val = state[0]
-            except Exception:
-                lock_val = 0.0
+            override = name_to_value.get(name, math.nan)
+            if math.isnan(override):
+                try:
+                    state = p.getJointState(self.robot_id, idx, physicsClientId=self.client)
+                    lock_val = state[0]
+                except Exception:
+                    lock_val = 0.0
+            else:
+                lock_val = float(override)
+                p.resetJointState(self.robot_id, idx, lock_val, physicsClientId=self.client)
             self._locked_joint_positions[idx] = lock_val
             if idx not in self.locked_joint_indices:
                 self.locked_joint_indices.append(idx)

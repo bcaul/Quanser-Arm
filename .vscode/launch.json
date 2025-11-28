@@ -8,7 +8,7 @@
       "name": "Student Sandbox (default)",
       "type": "debugpy",
       "request": "launch",
-      "module": "student_template.student_main",
+      "module": "demos.student_main",
       "justMyCode": true,
       "args": []
     },

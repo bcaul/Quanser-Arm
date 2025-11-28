@@ -13,7 +13,7 @@ for picking and placing coloured hoops onto stands.
 - `common.QArmBase` defines the joint-space API and default joint ordering.
 - `sim.env.QArmSimEnv` runs the PyBullet backend; `sim.SimQArm` wraps it to match `QArmBase`.
 - `api.make_qarm` switches between simulation (default, headless) and the stubbed `hardware.RealQArm`.
-- `student_template/` holds a runnable joint-control sandbox for teams.
+- `demos/` holds simplified student demos (quickstart, pick/place, keyboard control, gamepad hoops, scene helpers).
 - `hardware.RealQArm` remains a stub until the Quanser SDK is available.
 
 ## Local setup (for devs and students)
@@ -61,11 +61,16 @@ PY
 
 ## Where to start coding
 
-Open `student_template/student_main.py`. That sandbox already creates a QArm via `api.make_qarm()`, commands joint-space waypoints (yaw, shoulder, elbow, wrist), and is the only file most teams need to modify. Drop your own kinematics/motion logic in there while keeping the same `QArmBase` API.
+Open `demos/README.md` for the menu of short demos. The quickest path is
+`demos/student_main.py`, which homes the arm, runs a few joint-space
+waypoints, and optionally opens the Panda viewer. Other demos show a scripted
+pick-and-place, keyboard nudging, and adding a hoop + labels to the scene. Keep the
+joint order `(yaw, shoulder, elbow, wrist)` when you start dropping in your own
+kinematics.
 
 **Want to see something running?**
 ```bash
-python -m student_template.student_main
+python -m demos.student_main
 ```
 Run this ^ command in your terminal.
 
@@ -81,11 +86,16 @@ Run this ^ command in your terminal.
 python -m sim.actual_sim --real-time
 python -m sim.run_gui --gui --real-time --sliders
 ```
-- **Student sandbox (joint-space API):**
+- **Student demos (joint-space API):**
   ```bash
-  python -m student_template.student_main
+  python -m demos.student_main              # quickstart wave
+  python -m demos.pick_and_place            # simple scripted pick/place
+  python -m demos.keyboard_control          # manual nudges + gripper
+  python -m demos.scene_objects             # meshes in the scene
+  python -m demos.hoop_segments             # single hoop with collision segments
+  python -m demos.gamepad_multi_hoops       # gamepad teleop with multiple hoops
   ```
-  (Edit the defaults at the top of `student_template/student_main.py` to change duration, step size, or enable/disable the viewer/PyBullet GUI.)
+  (Edit the constants at the top of each file to change duration, viewer, or GUI toggles.)
 
 Base and accent meshes are now hardcoded in `sim/assets.py` (pinebase + collision and green/blue accents) with a shared 0.001 visual/collision scale, so PyBullet and Panda3D stay in sync without passing extra CLI arguments.
 
@@ -104,36 +114,28 @@ Base and accent meshes are now hardcoded in `sim/assets.py` (pinebase + collisio
       "name": "Student Sandbox (default)",
       "type": "debugpy",
       "request": "launch",
-      "module": "student_template.student_main",
+      "module": "demos.student_main",
       "justMyCode": true,
       "args": []
     },
     {
-      "name": "Actual Sim (PyBullet GUI)",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "sim.actual_sim",
-      "justMyCode": true,
-      "args": ["--real-time"]
-    },
-    {
-      "name": "Quick Run (run_gui)",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "sim.run_gui",
-      "justMyCode": true,
-      "args": ["--gui", "--sliders", "--real-time"]
-    },
-    {
-      "name": "Panda Viewer",
+      "name": "Panda Viewer (Debug)",
       "type": "debugpy",
       "request": "launch",
       "module": "sim.panda_viewer",
       "justMyCode": true,
       "args": []
+    },
+    {
+      "name": "PyBullet GUI (Debug)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "sim.run_gui",
+      "justMyCode": true,
+      "args": ["--gui", "--sliders", "--real-time"]
     }
   ]
 }
 ```
 
-- The first entry launches the student sandbox and is the default in VSCode. Other configs use PyBullet's GUI/debug sliders. Base meshes and scales are baked into the sim (see `sim/assets.py`), so no extra mesh arguments are required.
+- The first entry launches the beginner sandbox and is the default in VSCode. Other configs open the Panda viewer or PyBullet GUI/debug sliders. Base meshes and scales are baked into the sim (see `sim/assets.py`), so no extra mesh arguments are required.
