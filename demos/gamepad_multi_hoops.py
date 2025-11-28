@@ -1,4 +1,4 @@
-"""Gamepad teleop with multiple segmented hoops. Run: python -m demos.gamepad_multi_hoops"""
+"""Gamepad teleop with multiple segmented hoops (sliders + labels). Run: python -m demos.gamepad_multi_hoops"""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from demos._shared import run_with_viewer
 USE_PANDA_VIEWER = True
 USE_PYBULLET_GUI = False
 STEP_S = 0.02
+SHOW_SLIDERS = True
 MODEL_DIR = Path(__file__).resolve().parent / "models"
 
 HOOP_SEGMENT = MODEL_DIR / "hoop-segment.stl"
@@ -26,7 +27,15 @@ HOOP_COLLISION_SEGMENTS = {
     "yaw_step_deg": 29.9,
     "count": 12,
 }
-HOOP_MATERIAL = {"lateral_friction": 1.0, "rolling_friction": 0.05, "spinning_friction": 0.05, "restitution": 0.0, "contact_stiffness": 8e4, "contact_damping": 6e3}
+HOOP_MATERIAL = {
+    # Higher frictions and damping help hoops settle upright instead of rolling to odd angles.
+    "lateral_friction": 0.8,
+    "rolling_friction": 0.2,
+    "spinning_friction": 0.2,
+    "restitution": 0.0,
+    "contact_stiffness": 1.2e5,
+    "contact_damping": 1.0e4,
+}
 HOOP_POSITIONS = [(0.0, -0.30, 0.08), (0.1, -0.35, 0.08), (-0.1, -0.40, 0.08), (0.23, -0.25, 0.08)]
 HOOP_COLOR = (0.15, 0.85, 0.3, 1.0)
 
@@ -35,6 +44,7 @@ JOYSTICK_AXES = {"left_x": 0, "left_y": 1, "right_x": 2, "right_y": 3}
 JOYSTICK_BUTTONS = {"left_bumper": 9, "right_bumper": 10}
 GAMEPAD_DEADZONE = 0.1
 JOINT_SPEEDS = {"yaw": 1.4, "shoulder": 1.0, "elbow": 1.2, "wrist": 1.0}
+GRIPPER_LOCKS = {"GRIPPER_JOINT1B": 0.8, "GRIPPER_JOINT2B": -0.8}
 
 def clamp(val: float, bounds: tuple[float, float]) -> float:
     lo, hi = bounds
@@ -96,17 +106,18 @@ class XboxController:
         return lx, ly, rx, ry, buttons
 
 
-def add_hoops(arm: QArmBase) -> None:
+def add_hoops(arm: QArmBase) -> list[int]:
     env = getattr(arm, "env", None)
     if env is None or not hasattr(env, "add_kinematic_object"):
         print("[GamepadHoops] Simulator backend not available; skipping hoop spawn.")
-        return
+        return []
     hoop_mesh = MODEL_DIR / "hoop.stl"
     if not hoop_mesh.exists() or not HOOP_SEGMENT.exists():
         print(f"[GamepadHoops] Missing hoop meshes under {MODEL_DIR}.")
-        return
+        return []
+    ids: list[int] = []
     for pos in HOOP_POSITIONS:
-        env.add_kinematic_object(
+        hoop_id = env.add_kinematic_object(
             mesh_path=hoop_mesh,
             position=pos,
             orientation_euler_deg=(0.0, 0.0, 20.0),
@@ -117,7 +128,9 @@ def add_hoops(arm: QArmBase) -> None:
             rgba=HOOP_COLOR,
             **HOOP_MATERIAL,
         )
-    print(f"[GamepadHoops] Spawned {len(HOOP_POSITIONS)} hoops with collision segments.")
+        ids.append(hoop_id)
+    print(f"[GamepadHoops] Spawned {len(ids)} hoops with collision segments.")
+    return ids
 
 
 def teleop_loop(arm: QArmBase, stop_event: threading.Event) -> None:
@@ -162,21 +175,85 @@ def launch_viewer(arm: QArmBase) -> None:
         hide_base=False,
         hide_accents=False,
         probe_base_collision=False,
-        show_sliders=False,
+        show_sliders=SHOW_SLIDERS,
         reload_meshes=False,
     )
     bridge = PhysicsBridge(time_step=env.time_step, env=env, reset=False)
     PandaArmViewer(bridge, viewer_args).run()
 
 
+def lock_gripper_b_joints(env: object) -> None:
+    """Force gripper B joints to the desired locked angles."""
+    if env is None:
+        return
+    try:
+        # Prefer the env helper if available (handles bookkeeping).
+        locker = getattr(env, "_lock_joint_by_name", None)
+        if callable(locker):
+            locker(GRIPPER_LOCKS)
+            return
+    except Exception:
+        pass
+    try:
+        import pybullet as p  # type: ignore
+    except Exception:
+        return
+    try:
+        for idx, name in enumerate(getattr(env, "joint_names", [])):
+            if name not in GRIPPER_LOCKS:
+                continue
+            p.resetJointState(env.robot_id, idx, GRIPPER_LOCKS[name], physicsClientId=env.client)
+    except Exception:
+        return
+
+
+def start_live_hoop_labels(arm: QArmBase, hoop_ids: list[int], stop_event: threading.Event) -> threading.Thread | None:
+    env = getattr(arm, "env", None)
+    if env is None or not hoop_ids:
+        return None
+    try:
+        import pybullet as p  # type: ignore
+    except Exception:
+        return None
+
+    label_ids: dict[int, int] = {}
+    for i, hoop_id in enumerate(hoop_ids):
+        try:
+            label_ids[hoop_id] = env.add_point_label(
+                name=f"Hoop {i+1}",
+                position=(0.0, 0.0, 0.0),
+                color=(0.9, 0.4, 0.1, 1.0),
+                text_scale=0.028,
+                marker_scale=0.05,
+                show_coords=True,
+            )
+        except Exception:
+            continue
+
+    def _loop() -> None:
+        while not stop_event.wait(0.1):
+            for hoop_id, label_id in list(label_ids.items()):
+                try:
+                    pos, _ = p.getBasePositionAndOrientation(hoop_id, physicsClientId=env.client)
+                    env.update_point_label(label_id, position=pos)
+                except Exception:
+                    continue
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+    return t
+
+
 def main() -> None:
     auto_step = not USE_PANDA_VIEWER
     arm = make_qarm(mode="sim", gui=USE_PYBULLET_GUI, real_time=False, auto_step=auto_step)
     arm.home()
-    add_hoops(arm)
+    lock_gripper_b_joints(getattr(arm, "env", None))
+    hoop_ids = add_hoops(arm)
     stop_event = threading.Event()
     worker = threading.Thread(target=teleop_loop, args=(arm, stop_event), daemon=True)
     worker.start()
+    label_thread = start_live_hoop_labels(arm, hoop_ids, stop_event)
     try:
         if USE_PANDA_VIEWER:
             run_with_viewer(lambda: launch_viewer(arm), lambda: stop_event.wait())
@@ -189,6 +266,8 @@ def main() -> None:
     finally:
         stop_event.set()
         worker.join(timeout=1.0)
+        if label_thread is not None:
+            label_thread.join(timeout=1.0)
         try:
             arm.home()
         except Exception:
