@@ -40,6 +40,7 @@ def make_qarm(
           viewer while driving the real arm. Ignored in simulation mode.
     """
     mode_norm = mode.strip().lower()
+    mirror_requested = mirror_sim or mode_norm == "mirror"
 
     def _make_sim() -> SimQArm:
         return SimQArm(
@@ -54,9 +55,11 @@ def make_qarm(
 
     if mode_norm in {"sim", "simulation"}:
         return _make_sim()
+    if mode_norm == "mirror":
+        mode_norm = "hardware"
     if mode_norm == "hardware":
         hardware = RealQArm(client=hardware_client)
-        if mirror_sim:
+        if mirror_requested:
             sim_arm = _make_sim()
             return MirroredQArm(primary=hardware, mirror=sim_arm, mirror_name="simulation")
         return hardware

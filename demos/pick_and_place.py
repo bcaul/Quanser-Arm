@@ -20,6 +20,7 @@ from api.factory import make_qarm
 from common.qarm_base import DEFAULT_JOINT_ORDER, QArmBase
 
 MODE = "sim"
+USE_MIRROR_MODE = False  # set True to drive hardware while mirroring into the simulator
 USE_PANDA_VIEWER = True
 USE_PYBULLET_GUI = False
 STEP_DELAY_S = 1.0
@@ -72,13 +73,18 @@ def run_sequence(arm: QArmBase) -> None:
 
 def main() -> None:
     auto_step = not USE_PANDA_VIEWER
+    mode = MODE.lower()
+    mirror_mode = USE_MIRROR_MODE and mode == "hardware"
+    effective_mode = "hardware" if mirror_mode else mode
     arm = make_qarm(
-        mode=MODE,
+        mode=effective_mode,
         gui=USE_PYBULLET_GUI,
         real_time=False,
         auto_step=auto_step,
+        mirror_sim=mirror_mode,
     )
-    print("[PickPlace] Connected; moving to home.")
+    mirror_status = "on" if mirror_mode else "off"
+    print(f"[PickPlace] Connected (mode={mode}, mirror={mirror_status}); moving to home.")
     arm.home()
     time.sleep(STEP_DELAY_S)
 
