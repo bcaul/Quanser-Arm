@@ -231,8 +231,17 @@ class PhysicsBridge:
             except Exception:
                 pass
 
+    def get_active_grasp_info(self) -> Dict[str, object] | None:
+        """Expose current locked/grasped body info from the environment."""
+        if hasattr(self.env, "get_active_grasp_info"):
+            try:
+                return self.env.get_active_grasp_info()  # type: ignore[call-arg]
+            except Exception:
+                return None
+        return self.get_active_hoop_info()
+
     def get_active_hoop_info(self) -> Dict[str, object] | None:
-        """Expose current locked hoop info from the environment."""
+        """Expose current locked hoop info from the environment (legacy alias)."""
         if hasattr(self.env, "get_active_hoop_info"):
             try:
                 return self.env.get_active_hoop_info()  # type: ignore[call-arg]
@@ -379,8 +388,8 @@ class PandaArmViewer(ShowBase):
         self.joint_labels: List[Tuple["DirectLabel", int]] = []
         self.locked_labels: List[Tuple["DirectLabel", int]] = []
         self.lock_status_label: DirectLabel | None = None
-        self._locked_hoop_body: int | None = None
-        self._hoop_original_colors: Dict[int, Vec4] = {}
+        self._locked_body_id: int | None = None
+        self._locked_original_colors: Dict[int, Vec4] = {}
         self.fps_label: DirectLabel | None = None
         self.filters: CommonFilters | None = None
 
@@ -680,12 +689,12 @@ class PandaArmViewer(ShowBase):
                 self.locked_labels.append((value_label, joint_idx))
                 y -= 0.12
 
-        # Reset hoops button (bottom-right).
+        # Reset objects button (bottom-right).
         try:
             from direct.gui.DirectGui import DirectButton
 
             btn = DirectButton(
-                text="Reset Hoops",
+                text="Reset Objects",
                 scale=0.06,
                 pos=(0.75, 0, -0.9),
                 command=self._reset_hoops,
@@ -700,10 +709,10 @@ class PandaArmViewer(ShowBase):
             pass
 
     def _setup_lock_status(self) -> None:
-        """Overlay label showing current hoop lock status."""
+        """Overlay label showing current grasp/lock status."""
         try:
             self.lock_status_label = DirectLabel(
-                text="Hoop lock: none",
+                text="Lock: none",
                 scale=0.06,
                 pos=(-1.25, 0, 0.92),
                 frameColor=(0, 0, 0, 0),
@@ -835,39 +844,66 @@ class PandaArmViewer(ShowBase):
                 if joint_idx in locked_values:
                     value_label["text"] = f"{locked_values[joint_idx]:+.2f} rad"
 
+    def _get_grasp_info(self) -> Dict[str, object] | None:
+        """Fetch active grasp/lock info from the physics backend (with legacy fallback)."""
+        getter = getattr(self.physics, "get_active_grasp_info", None)
+        if getter is None:
+            getter = getattr(self.physics, "get_active_hoop_info", None)
+        if getter is None:
+            return None
+        try:
+            return getter()  # type: ignore[call-arg]
+        except Exception:
+            return None
+
+    def _current_locked_body_id(self) -> int | None:
+        """Return the currently locked body id, if any."""
+        info = self._get_grasp_info()
+        if not info:
+            return None
+        for key in ("grasp_body_id", "hoop_body_id", "body_id"):
+            val = info.get(key)
+            try:
+                if val is None:
+                    continue
+                return int(val)
+            except Exception:
+                continue
+        return None
+
     def _update_lock_status(self) -> None:
-        """Update lock overlay and highlight the locked hoop."""
-        info = self.physics.get_active_hoop_info()
-        hoop_id = info.get("hoop_body_id") if info else None
-        # Restore previous hoop color if lock changed.
-        if self._locked_hoop_body is not None and self._locked_hoop_body != hoop_id:
-            node = next((n for bid, n in self.kinematic_body_nodes if bid == self._locked_hoop_body), None)
-            if node and self._locked_hoop_body in self._hoop_original_colors:
+        """Update lock overlay and highlight the currently grasped body (if any)."""
+        info = self._get_grasp_info()
+        locked_id = self._current_locked_body_id()
+        # Restore previous color if lock changed.
+        if self._locked_body_id is not None and self._locked_body_id != locked_id:
+            node = next((n for bid, n in self.kinematic_body_nodes if bid == self._locked_body_id), None)
+            if node and self._locked_body_id in self._locked_original_colors:
                 try:
-                    node.setColor(self._hoop_original_colors[self._locked_hoop_body])
+                    node.setColor(self._locked_original_colors[self._locked_body_id])
                 except Exception:
                     pass
-            self._locked_hoop_body = None
+            self._locked_body_id = None
 
         if self.lock_status_label is None:
             return
-        if hoop_id is None:
-            self.lock_status_label["text"] = "Hoop lock: none"
+        if locked_id is None:
+            self.lock_status_label["text"] = "Lock: none"
             self.lock_status_label["text_fg"] = (1, 1, 1, 1)
             return
 
         parent_link = info.get("parent_link") if info else None
         link_name = self.idx_to_name.get(int(parent_link), "") if parent_link is not None else ""
-        self.lock_status_label["text"] = f"Hoop lock: {hoop_id} via {link_name or 'gripper'}"
+        self.lock_status_label["text"] = f"Lock: {locked_id} via {link_name or 'gripper'}"
         self.lock_status_label["text_fg"] = (0.5, 1.0, 0.5, 1.0)
-        self._locked_hoop_body = hoop_id
-        node = next((n for bid, n in self.kinematic_body_nodes if bid == hoop_id), None)
+        self._locked_body_id = locked_id
+        node = next((n for bid, n in self.kinematic_body_nodes if bid == locked_id), None)
         if node:
-            if hoop_id not in self._hoop_original_colors:
+            if locked_id not in self._locked_original_colors:
                 try:
-                    self._hoop_original_colors[hoop_id] = node.getColor()
+                    self._locked_original_colors[locked_id] = node.getColor()
                 except Exception:
-                    self._hoop_original_colors[hoop_id] = Vec4(1, 1, 1, 1)
+                    self._locked_original_colors[locked_id] = Vec4(1, 1, 1, 1)
             try:
                 node.setColor(Vec4(0.4, 1.0, 0.4, 1.0))
             except Exception:
@@ -1024,9 +1060,7 @@ class PandaArmViewer(ShowBase):
         name = self.hoop_names.get(body_id, f"Hoop {body_id}")
         txt_node.setText(name)
         if locked is None:
-            info = self.physics.get_active_hoop_info()
-            locked_id = info.get("hoop_body_id") if info else None
-            locked = body_id == locked_id
+            locked = body_id == self._current_locked_body_id()
         color = Vec4(0.35, 1.0, 0.4, 1.0) if locked else Vec4(1.0, 0.35, 0.35, 1.0)
         txt_node.setTextColor(color)
         marker.setColor(color)
@@ -1036,10 +1070,7 @@ class PandaArmViewer(ShowBase):
     def _update_hoop_labels(self) -> None:
         if not self.show_hoop_labels or not self.hoop_label_nodes:
             return
-        locked_id = None
-        info = self.physics.get_active_hoop_info()
-        if info:
-            locked_id = info.get("hoop_body_id")
+        locked_id = self._current_locked_body_id()
         for hoop_id in list(self.hoop_label_nodes.keys()):
             self._update_single_hoop_label(hoop_id, locked=hoop_id == locked_id)
 
@@ -1172,10 +1203,13 @@ class PandaArmViewer(ShowBase):
                 continue
 
     def _reset_hoops(self) -> None:
-        """Reset kinematic/dynamic hoops to their original poses if available."""
+        """Reset spawned objects to their original poses if available."""
         try:
             if hasattr(self.physics, "env") and hasattr(self.physics.env, "reset"):
-                self.physics.env.reset_hoops()  # type: ignore[attr-defined]
+                if hasattr(self.physics.env, "reset_objects"):
+                    self.physics.env.reset_objects()  # type: ignore[attr-defined]
+                else:
+                    self.physics.env.reset_hoops()  # type: ignore[attr-defined]
         except Exception as exc:
             print("[PandaViewer] Failed to reset hoops:", exc)
 

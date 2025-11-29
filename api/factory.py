@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 from common.qarm_base import QArmBase
 from .mirrored_qarm import MirroredQArm
-from hardware.real_qarm import RealQArm
 from sim.env import QArmSimEnv
 from sim.sim_qarm import SimQArm
+
+if TYPE_CHECKING:
+    # Import for type checking only; hardware dependencies stay unloaded unless requested.
+    from hardware.real_qarm import RealQArm
 
 
 def make_qarm(
@@ -58,6 +61,8 @@ def make_qarm(
     if mode_norm == "mirror":
         mode_norm = "hardware"
     if mode_norm == "hardware":
+        from hardware.real_qarm import RealQArm
+
         hardware = RealQArm(client=hardware_client)
         if mirror_requested:
             sim_arm = _make_sim()

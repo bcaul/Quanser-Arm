@@ -127,15 +127,17 @@ class QArmSimEnv:
         # Grasp/locking helpers
         self._gripper_b_links: list[int] = []
         self._gripper_control_indices: list[int] = []
-        self._hoop_body_ids: set[int] = set()
-        self._active_hoop_constraint: int | None = None
-        self._active_hoop_body: int | None = None
-        self._hoop_collision_disabled: set[int] = set()
-        self._active_hoop_info: dict[str, object] | None = None
-        self._hoop_release_cooldown: dict[int, float] = {}
+        self._graspable_body_ids: set[int] = set()
+        self._active_grasp_constraint: int | None = None
+        self._active_grasp_body: int | None = None
+        self._grasp_collision_disabled: set[int] = set()
+        self._active_grasp_info: dict[str, object] | None = None
+        self._grasp_release_cooldown: dict[int, float] = {}
         self._gripper_motion_state: str = "idle"
         self._last_gripper_commanded_angle: float | None = None
         self._gripper_base_link_index: int | None = None
+        # Retain a legacy hoop subset for friction/label heuristics.
+        self._hoop_body_ids: set[int] = set()
 
         p.setTimeStep(self.time_step, physicsClientId=self.client)
         p.setGravity(0, 0, -9.81, physicsClientId=self.client)
@@ -276,7 +278,7 @@ class QArmSimEnv:
         dt_per_step = self.time_step if dt is None else float(dt) / n_steps
         for _ in range(n_steps):
             p.stepSimulation(physicsClientId=self.client)
-            self._update_hoop_grasp(dt_per_step)
+            self._update_grasp(dt_per_step)
 
     def set_joint_positions(self, q: Sequence[float], max_force: float = 5.0) -> None:
         """
@@ -585,6 +587,7 @@ class QArmSimEnv:
         mass: float = 0.0,
         force_convex_for_dynamic: bool = True,
         align_aabb_center: bool = False,
+        graspable: bool = True,
         lateral_friction: float | None = None,
         rolling_friction: float | None = None,
         spinning_friction: float | None = None,
@@ -604,6 +607,7 @@ class QArmSimEnv:
         the requested position (helpful for off-center mesh origins). Defaults to False.
         Provide `collision_segments` to build a compound collision shape from repeated
         mesh segments (e.g., a hoop made of convex slices arranged in a ring).
+        Set `graspable=False` to exclude the body from automatic gripper locking.
         """
 
         mesh = Path(mesh_path).expanduser()
@@ -807,6 +811,8 @@ class QArmSimEnv:
                 rgba=color_rgba,
             )
         )
+        if graspable:
+            self._graspable_body_ids.add(body_id)
         if "hoop" in mesh.name.lower():
             self._hoop_body_ids.add(body_id)
         return body_id
@@ -952,12 +958,15 @@ class QArmSimEnv:
         except Exception:
             pass
 
-    # ---------- Hoop reset helper (used by Panda viewer button) ----------
-    def reset_hoops(self) -> None:
-        """Reset hoop-like kinematic objects to their original pose if they came from add_kinematic_object."""
+    # ---------- Object reset helper (used by Panda viewer button) ----------
+    def reset_objects(self) -> None:
+        """Reset kinematic objects to their original pose and clear any active grasp."""
         if not getattr(self, "kinematic_objects", None):
             return
-        self._release_hoop_constraint()
+        self._release_grasp_constraint()
+        self._grasp_release_cooldown.clear()
+        for body_id in list(self._grasp_collision_disabled):
+            self._enable_grasp_collision(body_id)
         for obj in self.kinematic_objects:
             try:
                 p.resetBasePositionAndOrientation(
@@ -968,8 +977,12 @@ class QArmSimEnv:
                 )
             except Exception:
                 continue
-        self._active_hoop_info = None
+        self._active_grasp_info = None
         self._gripper_motion_state = "idle"
+
+    def reset_hoops(self) -> None:
+        """Backward-compatible alias for reset_objects (resets all spawned meshes)."""
+        self.reset_objects()
 
     @staticmethod
     def _as_vec3(scale: float | Sequence[float]) -> list[float]:
@@ -1018,78 +1031,78 @@ class QArmSimEnv:
         self._gripper_motion_state = state
         return state
 
-    # ---------- Hoop grasp/lock helpers ----------
-    def _release_hoop_constraint(self) -> None:
+    # ---------- Grasp/lock helpers ----------
+    def _release_grasp_constraint(self) -> None:
         pose: tuple[tuple[float, float, float], tuple[float, float, float, float]] | None = None
-        if self._active_hoop_body is not None:
+        if self._active_grasp_body is not None:
             try:
-                pose = p.getBasePositionAndOrientation(self._active_hoop_body, physicsClientId=self.client)
+                pose = p.getBasePositionAndOrientation(self._active_grasp_body, physicsClientId=self.client)
             except Exception:
                 pose = None
-        if self._active_hoop_constraint is not None:
+        if self._active_grasp_constraint is not None:
             try:
-                p.removeConstraint(self._active_hoop_constraint, physicsClientId=self.client)
+                p.removeConstraint(self._active_grasp_constraint, physicsClientId=self.client)
             except Exception:
                 pass
-        if self._active_hoop_body is not None:
-            hoop_id = self._active_hoop_body
+        if self._active_grasp_body is not None:
+            body_id = self._active_grasp_body
             # Keep collisions disabled during a short cooldown to avoid immediate re-collision.
-            self._disable_hoop_collision(hoop_id)
-            self._hoop_release_cooldown[hoop_id] = 0.2
+            self._disable_grasp_collision(body_id)
+            self._grasp_release_cooldown[body_id] = 0.2
             if pose is not None:
                 try:
-                    p.resetBasePositionAndOrientation(hoop_id, pose[0], pose[1], physicsClientId=self.client)
+                    p.resetBasePositionAndOrientation(body_id, pose[0], pose[1], physicsClientId=self.client)
                 except Exception:
                     pass
-        self._active_hoop_constraint = None
-        self._active_hoop_body = None
-        self._active_hoop_info = None
+        self._active_grasp_constraint = None
+        self._active_grasp_body = None
+        self._active_grasp_info = None
 
-    def _update_hoop_grasp(self, dt: float) -> None:
-        """Lock a hoop when both B links touch; release when commanded to open."""
-        if not self._hoop_body_ids or not self._gripper_b_links:
+    def _update_grasp(self, dt: float) -> None:
+        """Lock any graspable body when both B links touch; release when commanded to open."""
+        if not self._graspable_body_ids or not self._gripper_b_links:
             return
         # Handle release grace periods: re-enable collisions once cooldown elapses.
-        for hoop_id in list(self._hoop_release_cooldown.keys()):
-            remaining = self._hoop_release_cooldown[hoop_id] - dt
+        for body_id in list(self._grasp_release_cooldown.keys()):
+            remaining = self._grasp_release_cooldown[body_id] - dt
             if remaining <= 0.0:
-                self._enable_hoop_collision(hoop_id)
-                self._hoop_release_cooldown.pop(hoop_id, None)
+                self._enable_grasp_collision(body_id)
+                self._grasp_release_cooldown.pop(body_id, None)
             else:
-                self._hoop_release_cooldown[hoop_id] = remaining
+                self._grasp_release_cooldown[body_id] = remaining
         # Release as soon as an opening command is issued.
-        if self._active_hoop_constraint is not None:
+        if self._active_grasp_constraint is not None:
             if self._gripper_motion_state == "opening":
-                self._release_hoop_constraint()
+                self._release_grasp_constraint()
             return
         if self._gripper_base_link_index is None:
             return
 
-        for hoop_id in list(self._hoop_body_ids):
-            if hoop_id in self._hoop_release_cooldown:
+        for body_id in list(self._graspable_body_ids):
+            if body_id in self._grasp_release_cooldown:
                 continue
-            contacts = p.getContactPoints(bodyA=self.robot_id, bodyB=hoop_id, physicsClientId=self.client)
+            contacts = p.getContactPoints(bodyA=self.robot_id, bodyB=body_id, physicsClientId=self.client)
             if not contacts:
                 continue
             b_link_contacts = [c for c in contacts if c[3] in self._gripper_b_links]
             links_hit = {c[3] for c in b_link_contacts}
             if set(self._gripper_b_links).issubset(links_hit):
                 sample_contact = b_link_contacts[0] if b_link_contacts else contacts[0]
-                self._lock_hoop_to_gripper_base(
-                    hoop_id=hoop_id,
+                self._lock_body_to_gripper_base(
+                    body_id=body_id,
                     gripper_base_idx=self._gripper_base_link_index,
                     sample_contact=sample_contact,
                 )
                 break
 
-    def _lock_hoop_to_gripper_base(
+    def _lock_body_to_gripper_base(
         self,
         *,
-        hoop_id: int,
+        body_id: int,
         gripper_base_idx: int,
         sample_contact: tuple[object, ...] | None = None,
     ) -> None:
-        """Create a fixed constraint between the gripper base and the hoop body."""
+        """Create a fixed constraint between the gripper base and a grasped body."""
         try:
             parent_state = p.getLinkState(
                 self.robot_id,
@@ -1099,7 +1112,7 @@ class QArmSimEnv:
             )
             parent_world_pos, parent_world_orn = parent_state[4], parent_state[5]
             child_world_pos, child_world_orn = p.getBasePositionAndOrientation(
-                hoop_id, physicsClientId=self.client
+                body_id, physicsClientId=self.client
             )
             inv_parent_pos, inv_parent_orn = p.invertTransform(parent_world_pos, parent_world_orn)
             parent_local_pos, parent_local_orn = p.multiplyTransforms(
@@ -1108,7 +1121,7 @@ class QArmSimEnv:
             cid = p.createConstraint(
                 parentBodyUniqueId=self.robot_id,
                 parentLinkIndex=gripper_base_idx,
-                childBodyUniqueId=hoop_id,
+                childBodyUniqueId=body_id,
                 childLinkIndex=-1,
                 jointType=p.JOINT_FIXED,
                 jointAxis=[0.0, 0.0, 0.0],
@@ -1121,44 +1134,50 @@ class QArmSimEnv:
             p.changeConstraint(cid, maxForce=400.0, erp=0.2, physicsClientId=self.client)
         except Exception:
             return
-        self._active_hoop_constraint = cid
-        self._active_hoop_body = hoop_id
-        self._active_hoop_info = {
+        self._active_grasp_constraint = cid
+        self._active_grasp_body = body_id
+        self._active_grasp_info = {
             "parent_link": gripper_base_idx,
             "parent_local": parent_local_pos,
             "child_link": -1,
             "child_local": (0.0, 0.0, 0.0),
         }
         if sample_contact is not None and len(sample_contact) > 7:
-            self._active_hoop_info["contact_normal"] = sample_contact[7]
-        self._disable_hoop_collision(hoop_id)
+            self._active_grasp_info["contact_normal"] = sample_contact[7]
+        self._disable_grasp_collision(body_id)
 
-    def get_active_hoop_info(self) -> dict[str, object] | None:
-        """Return info about the currently locked hoop (if any)."""
-        if self._active_hoop_body is None or self._active_hoop_info is None:
+    def get_active_grasp_info(self) -> dict[str, object] | None:
+        """Return info about the currently locked/grasped body (if any)."""
+        if self._active_grasp_body is None or self._active_grasp_info is None:
             return None
-        info = dict(self._active_hoop_info)
-        info["hoop_body_id"] = self._active_hoop_body
+        info = dict(self._active_grasp_info)
+        info["body_id"] = self._active_grasp_body
+        info["grasp_body_id"] = self._active_grasp_body
+        info.setdefault("hoop_body_id", self._active_grasp_body)
         return info
 
-    def _disable_hoop_collision(self, hoop_id: int) -> None:
-        """Disable collisions between the hoop and the robot while locked."""
-        if hoop_id in self._hoop_collision_disabled:
-            return
-        for link_idx in self._robot_link_indices:
-            try:
-                p.setCollisionFilterPair(self.robot_id, hoop_id, link_idx, -1, 0, physicsClientId=self.client)
-            except Exception:
-                continue
-        self._hoop_collision_disabled.add(hoop_id)
+    def get_active_hoop_info(self) -> dict[str, object] | None:
+        """Backward-compatible alias for get_active_grasp_info."""
+        return self.get_active_grasp_info()
 
-    def _enable_hoop_collision(self, hoop_id: int) -> None:
-        """Re-enable collisions once unlocked."""
-        if hoop_id not in self._hoop_collision_disabled:
+    def _disable_grasp_collision(self, body_id: int) -> None:
+        """Disable collisions between the grasped body and the robot while locked."""
+        if body_id in self._grasp_collision_disabled:
             return
         for link_idx in self._robot_link_indices:
             try:
-                p.setCollisionFilterPair(self.robot_id, hoop_id, link_idx, -1, 1, physicsClientId=self.client)
+                p.setCollisionFilterPair(self.robot_id, body_id, link_idx, -1, 0, physicsClientId=self.client)
             except Exception:
                 continue
-        self._hoop_collision_disabled.discard(hoop_id)
+        self._grasp_collision_disabled.add(body_id)
+
+    def _enable_grasp_collision(self, body_id: int) -> None:
+        """Re-enable collisions once unlocked."""
+        if body_id not in self._grasp_collision_disabled:
+            return
+        for link_idx in self._robot_link_indices:
+            try:
+                p.setCollisionFilterPair(self.robot_id, body_id, link_idx, -1, 1, physicsClientId=self.client)
+            except Exception:
+                continue
+        self._grasp_collision_disabled.discard(body_id)

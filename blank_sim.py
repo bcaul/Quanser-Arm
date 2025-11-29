@@ -20,7 +20,7 @@ from demos._shared import run_with_viewer
 # ---------------------------------------------------------------------------
 # Quick knobs to tweak the experience
 # ---------------------------------------------------------------------------
-MODE = "mirror"  # keep "sim" until you have hardware; use "mirror" for hardware+sim
+MODE = "sim"  # keep "sim" until you have hardware; use "mirror" for hardware+sim
 USE_PANDA_VIEWER = True  # Panda3D window that shows the arm; set False for console only
 USE_PYBULLET_GUI = False  # Bullet's debug sliders (rarely needed)
 TIME_STEP = 1.0 / 240.0
