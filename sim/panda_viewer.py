@@ -787,6 +787,11 @@ class PandaArmViewer(ShowBase):
         return task.cont
 
     def _sync_models(self) -> None:
+        # Ensure any kinematic objects added at runtime have Panda nodes.
+        try:
+            self._sync_kinematic_nodes()
+        except Exception:
+            pass
         poses = self.physics.get_link_poses()
         for name, node in self.link_nodes.items():
             if name not in poses:
@@ -1031,6 +1036,71 @@ class PandaArmViewer(ShowBase):
             self.kinematic_body_nodes.append((obj.body_id, node))
             if self.show_hoop_labels and "hoop" in obj.visual_path.name.lower():
                 self._ensure_hoop_label(obj.body_id, suggested_name=obj.visual_path.stem or "Hoop")
+
+    def _sync_kinematic_nodes(self) -> None:
+        """Detect any new kinematic objects in the physics backend and create Panda nodes for them.
+
+        The viewer previously only created nodes at setup time. This method allows
+        objects added later (e.g. hoops spawned by a student script) to appear
+        without restarting the viewer.
+        """
+        try:
+            objs = list(self.physics.kinematic_objects)
+        except Exception:
+            objs = []
+        # Fast-path if nothing to do.
+        if not objs:
+            return
+        existing_ids = {bid for bid, _ in self.kinematic_body_nodes}
+        for obj in objs:
+            if obj.body_id in existing_ids:
+                continue
+            try:
+                # Diagnostic: report when we attempt to create a node for a new kinematic object.
+                try:
+                    exists = obj.visual_path.exists()
+                except Exception:
+                    exists = False
+                print(f"[PandaViewer] Syncing kinematic object body_id={obj.body_id} visual_path={obj.visual_path} exists={exists}")
+                node = self._load_mesh(obj.visual_path)
+                node.reparentTo(self.render)
+                scale_vec = self._as_vec3(obj.scale)
+                try:
+                    shape_data = p.getVisualShapeData(obj.body_id, -1, physicsClientId=self.physics.client)
+                    if shape_data:
+                        dims = shape_data[0][3]
+                        scale_vec = self._as_vec3(dims)
+                except Exception:
+                    pass
+                node.setPos(obj.position[0], obj.position[1], obj.position[2])
+                node.setQuat(
+                    LQuaternionf(
+                        obj.orientation_xyzw[3],
+                        obj.orientation_xyzw[0],
+                        obj.orientation_xyzw[1],
+                        obj.orientation_xyzw[2],
+                    )
+                )
+                node.setScale(scale_vec)
+                node.setTwoSided(True)
+                node.setShaderAuto(True)
+                if obj.rgba:
+                    color = Vec4(*obj.rgba)
+                    node.setColor(color)
+                    mat = Material()
+                    mat.setDiffuse(color)
+                    mat.setAmbient(color * 0.8)
+                    mat.setSpecular(Vec4(0.08, 0.08, 0.08, 1))
+                    mat.setShininess(6.0)
+                    node.setMaterial(mat, 1)
+                self.kinematic_nodes.append(node)
+                self.kinematic_body_nodes.append((obj.body_id, node))
+                if self.show_hoop_labels and "hoop" in obj.visual_path.name.lower():
+                    self._ensure_hoop_label(obj.body_id, suggested_name=obj.visual_path.stem or "Hoop")
+                existing_ids.add(obj.body_id)
+            except Exception:
+                # Don't let one bad object stop the sync loop.
+                continue
 
     def _setup_point_labels(self) -> None:
         """Create any user-provided point labels from the physics backend."""
