@@ -16,6 +16,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterable
 import json
+import math
+
+try:
+    import pybullet as p
+except Exception:
+    p = None
 
 from api.factory import make_qarm
 from common.qarm_base import QArmBase
@@ -119,10 +125,14 @@ if HOOP_POS_FILE.exists():
                     out["orientation_euler_deg"] = tuple(out["orientation_euler_deg"])
                 if "rgba" in out and isinstance(out["rgba"], list):
                     out["rgba"] = tuple(out["rgba"])
+                # Ensure an 'enabled' flag exists so entries can be toggled in JSON
+                if "enabled" not in out:
+                    out["enabled"] = True
                 return out
 
             DEFAULT_HOOP_DEFS = [_norm(x) for x in loaded]
-            print(f"[Hoop] Loaded {len(DEFAULT_HOOP_DEFS)} hoop definitions from {HOOP_POS_FILE}")
+            enabled_count = sum(1 for d in DEFAULT_HOOP_DEFS if d.get("enabled", True))
+            print(f"[Hoop] Loaded {len(DEFAULT_HOOP_DEFS)} hoop definitions from {HOOP_POS_FILE} ({enabled_count} enabled)")
         else:
             print(f"[Hoop] {HOOP_POS_FILE} does not contain a list; using defaults.")
     except Exception as e:
@@ -191,11 +201,91 @@ def add_hoops(arm: QArmBase, definitions: Iterable[dict]) -> None:
         ]
         add_hoops(arm, defs)
     """
-    for d in definitions:
+    # Respect optional 'enabled' flag on each definition
+    enabled_defs = [d for d in definitions if d.get("enabled", True)]
+    skipped = len(definitions) - len(enabled_defs)
+    if skipped:
+        print(f"[Hoop] Skipping {skipped} disabled hoop definition(s).")
+
+    for d in enabled_defs:
         try:
-            add_hoop(arm, **d)
+            # Do not forward the internal 'enabled' flag to add_hoop
+            kwargs = dict(d)
+            kwargs.pop("enabled", None)
+            add_hoop(arm, **kwargs)
         except TypeError as e:
             print(f"[Hoop] Invalid hoop definition {d}: {e}")
+
+
+def _find_accent_world_positions(env, accent_stem: str = "greenaccent") -> list[tuple[float, float, float]]:
+    """Return world-space positions of visual shapes whose filename stem contains `accent_stem`.
+
+    Looks at the floor body visual shapes and converts their local-frame positions
+    into world coordinates using the floor body's base transform.
+    """
+    if p is None:
+        return []
+    floor_id = getattr(env, "floor_id", None)
+    if floor_id is None:
+        return []
+    try:
+        shapes = p.getVisualShapeData(floor_id, physicsClientId=env.client)
+    except Exception:
+        return []
+    try:
+        base_pos, base_orn = p.getBasePositionAndOrientation(floor_id, physicsClientId=env.client)
+    except Exception:
+        base_pos, base_orn = (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)
+    out: list[tuple[float, float, float]] = []
+    for shape in shapes:
+        filename = shape[4]
+        if not filename:
+            continue
+        stem = Path(filename).stem.lower()
+        if accent_stem.lower() not in stem:
+            continue
+        local_pos = shape[5]
+        local_orn = shape[6]
+        try:
+            world_pos, _ = p.multiplyTransforms(base_pos, base_orn, local_pos, local_orn)
+            out.append((float(world_pos[0]), float(world_pos[1]), float(world_pos[2])))
+        except Exception:
+            continue
+    return out
+
+
+def _place_first_green_over_accent(arm: QArmBase) -> bool:
+    """Find a green accent and move the first enabled green hoop definition over it.
+
+    Returns True if an update was made.
+    """
+    env = getattr(arm, "env", None)
+    if env is None:
+        return False
+    accents = _find_accent_world_positions(env, accent_stem=Path(getattr(env, 'base_assets', None).green_accent_mesh).stem if getattr(env, 'base_assets', None) else 'greenaccent')
+    if not accents:
+        return False
+    accent_pos = accents[0]
+    # Find first enabled green hoop in the default defs
+    for d in DEFAULT_HOOP_DEFS:
+        if not d.get("enabled", True):
+            continue
+        rgba = d.get("rgba")
+        if not rgba:
+            continue
+        # Heuristic: treat high G component (>0.6) as green
+        try:
+            if float(rgba[1]) > 0.6:
+                # compute center z as before using HOOP_COLLISION_SEGMENTS radius
+                radius_mm = HOOP_COLLISION_SEGMENTS.get("radius", 0.0)
+                scale = d.get("scale", 0.001)
+                center_z = BOARD_SURFACE_Z + (radius_mm * 0.001) * float(scale)
+                d["position"] = (accent_pos[0], accent_pos[1], center_z)
+                print(f"[Hoop] Moved first enabled green hoop to accent at {d['position']}")
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def run_viewer(arm: QArmBase) -> None:
@@ -228,6 +318,12 @@ def main() -> None:
         auto_step=auto_step,
     )
     arm.home()
+    # If possible, snap the first enabled green hoop to the green accent/pole
+    try:
+        _place_first_green_over_accent(arm)
+    except Exception:
+        pass
+
     if SPAWN_MULTIPLE_HOOPS:
         add_hoops(arm, DEFAULT_HOOP_DEFS)
     else:
