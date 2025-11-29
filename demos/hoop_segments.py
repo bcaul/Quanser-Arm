@@ -119,10 +119,14 @@ if HOOP_POS_FILE.exists():
                     out["orientation_euler_deg"] = tuple(out["orientation_euler_deg"])
                 if "rgba" in out and isinstance(out["rgba"], list):
                     out["rgba"] = tuple(out["rgba"])
+                # Ensure an 'enabled' flag exists so entries can be toggled in JSON
+                if "enabled" not in out:
+                    out["enabled"] = True
                 return out
 
             DEFAULT_HOOP_DEFS = [_norm(x) for x in loaded]
-            print(f"[Hoop] Loaded {len(DEFAULT_HOOP_DEFS)} hoop definitions from {HOOP_POS_FILE}")
+            enabled_count = sum(1 for d in DEFAULT_HOOP_DEFS if d.get("enabled", True))
+            print(f"[Hoop] Loaded {len(DEFAULT_HOOP_DEFS)} hoop definitions from {HOOP_POS_FILE} ({enabled_count} enabled)")
         else:
             print(f"[Hoop] {HOOP_POS_FILE} does not contain a list; using defaults.")
     except Exception as e:
@@ -191,9 +195,18 @@ def add_hoops(arm: QArmBase, definitions: Iterable[dict]) -> None:
         ]
         add_hoops(arm, defs)
     """
-    for d in definitions:
+    # Respect optional 'enabled' flag on each definition
+    enabled_defs = [d for d in definitions if d.get("enabled", True)]
+    skipped = len(definitions) - len(enabled_defs)
+    if skipped:
+        print(f"[Hoop] Skipping {skipped} disabled hoop definition(s).")
+
+    for d in enabled_defs:
         try:
-            add_hoop(arm, **d)
+            # Do not forward the internal 'enabled' flag to add_hoop
+            kwargs = dict(d)
+            kwargs.pop("enabled", None)
+            add_hoop(arm, **kwargs)
         except TypeError as e:
             print(f"[Hoop] Invalid hoop definition {d}: {e}")
 
