@@ -20,7 +20,7 @@ from demos._shared import run_with_viewer
 # ---------------------------------------------------------------------------
 # Quick knobs to tweak the experience
 # ---------------------------------------------------------------------------
-MODE = "sim"  # keep "sim" until you have hardware; use "mirror" for hardware+sim
+MODE = "mirror"  # keep "sim" until you have hardware; use "mirror" for hardware+sim
 USE_PANDA_VIEWER = True  # Panda3D window that shows the arm; set False for console only
 USE_PYBULLET_GUI = False  # Bullet's debug sliders (rarely needed)
 TIME_STEP = 1.0 / 240.0
@@ -65,14 +65,18 @@ def _headless_spin(env: object) -> None:
 
 def main() -> None:
     """Entry point. Follow the comments below to add your own code."""
+    mode = MODE.lower()
+    mirror_mode = mode == "mirror"
+    effective_mode = "hardware" if mirror_mode else mode
     auto_step = not USE_PANDA_VIEWER  # viewer updates the sim when it's open
-    print(f"[Blank] Connecting to QArm in {MODE} mode with joint order {DEFAULT_JOINT_ORDER}")
+    print(f"[Blank] Connecting to QArm in {mode} mode with joint order {DEFAULT_JOINT_ORDER}")
     arm = make_qarm(
-        mode=MODE,
+        mode=effective_mode,
         gui=USE_PYBULLET_GUI,
         real_time=False,
         time_step=TIME_STEP,
         auto_step=auto_step,
+        mirror_sim=mirror_mode,
     )
 
     env = getattr(arm, "env", None)
@@ -80,14 +84,18 @@ def main() -> None:
         env.reset()  # start from a zeroed pose
 
     try:
-        # We launch the viewer *and* your script together. `run_with_viewer`
-        # keeps Panda3D on the main thread (required on macOS) while your code
-        # runs in a background worker once the window appears.
         if USE_PANDA_VIEWER:
-            print("[Blank] Viewer opening. Your code (above) keeps running.")
-            run_with_viewer(lambda: _launch_viewer(arm), lambda: student_script(arm))
+            print("[Blank] Viewer opening. Running your script while the window is visible.")
+            # Use a worker thread so `student_script` runs at the same time as the viewer.
+            # Threads let one part of your program keep working (running commands) while
+            # another part (the Panda window) stays responsive on the main thread.
+            import threading
+
+            worker = threading.Thread(target=student_script, args=(arm,), daemon=True)
+            worker.start()
+            _launch_viewer(arm)
+            worker.join()
         elif env is not None:
-            # No viewer? Just run your script and optionally keep physics ticking.
             student_script(arm)
             _headless_spin(env)
         else:
@@ -95,8 +103,6 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\n[Blank] Stopping minimal sim.")
     finally:
-        # Always return to a safe pose and disconnect cleanly. Beginners
-        # shouldn't worry about the try/except here; it's just defensive.
         try:
             arm.home()
         except Exception:
@@ -129,13 +135,13 @@ def student_script(arm: QArmBase) -> None:
     # print("Moved joints:", arm.get_joint_positions())
 
     # --- Example 3: alternate between two poses a few times
-    pose_a = [0.0, 0.3, -0.3, 0.0]
-    pose_b = [0.0, 0.6, -0.6, 0.0]
-    for i in range(5):
-        arm.set_joint_positions(pose_a)
-        time.sleep(0.5)
-        arm.set_joint_positions(pose_b)
-        time.sleep(0.5)
+    # pose_a = [0.0, 0.3, -0.3, 0.0]
+    # pose_b = [0.0, 0.6, -0.6, 0.0]
+    # for i in range(5):
+    #     arm.set_joint_positions(pose_a)
+    #     time.sleep(0.5)
+    #     arm.set_joint_positions(pose_b)
+    #     time.sleep(0.5)
 
     # Remove the `pass` when you start adding your own code.
     pass
