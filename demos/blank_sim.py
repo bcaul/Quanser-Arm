@@ -1,8 +1,8 @@
 """
-Minimal QArm simulator bootstrap.
+Friendly starter template for the QArm simulator.
 
-Use this as the cleanest starting point: connect to the simulator, keep it
-alive, and drop in your own motion/kinematics code where noted.
+Use this file as your sandbox: edit one section at a time, read the comments,
+and try things out as you learn.
 
 Run it:
     python -m demos.blank_sim
@@ -15,11 +15,14 @@ from types import SimpleNamespace
 
 from api.factory import make_qarm
 from common.qarm_base import DEFAULT_JOINT_ORDER, QArmBase
+from demos._shared import run_with_viewer
 
-# --- quick toggles for students ---
-MODE = "sim"  # leave as "sim" for the hackathon; switch to "hardware" later
-USE_PANDA_VIEWER = True  # Panda3D viewer (preferred way to see the arm)
-USE_PYBULLET_GUI = False  # set True to debug with Bullet's sliders/debug UI
+# ---------------------------------------------------------------------------
+# Quick knobs to tweak the experience
+# ---------------------------------------------------------------------------
+MODE = "sim"  # keep "sim" until you have hardware; use "mirror" for hardware+sim
+USE_PANDA_VIEWER = True  # Panda3D window that shows the arm; set False for console only
+USE_PYBULLET_GUI = False  # Bullet's debug sliders (rarely needed)
 TIME_STEP = 1.0 / 240.0
 HEADLESS_SECONDS = 10.0  # how long to run when no viewer is open
 SHOW_VIEWER_SLIDERS = False
@@ -27,7 +30,7 @@ RELOAD_MESHES = False
 
 
 def _launch_viewer(arm: QArmBase) -> None:
-    """Spin up the Panda3D viewer that renders the PyBullet simulation."""
+    """Open the Panda3D viewer. Beginners: just leave this alone."""
     env = getattr(arm, "env", None)
     if env is None:
         print("[Blank] No simulator attached; viewer cannot start.")
@@ -48,7 +51,7 @@ def _launch_viewer(arm: QArmBase) -> None:
 
 
 def _headless_spin(env: object) -> None:
-    """Step physics without rendering—handy if you only need the backend running."""
+    """Keep physics running without graphics (useful for scripts/tests)."""
     if not hasattr(env, "step") or not hasattr(env, "time_step"):
         print("[Blank] No environment to step. Enable the simulator first.")
         return
@@ -61,8 +64,8 @@ def _headless_spin(env: object) -> None:
 
 
 def main() -> None:
-    # Auto-step is disabled when the viewer runs because the viewer drives stepping.
-    auto_step = not USE_PANDA_VIEWER
+    """Entry point. Follow the comments below to add your own code."""
+    auto_step = not USE_PANDA_VIEWER  # viewer updates the sim when it's open
     print(f"[Blank] Connecting to QArm in {MODE} mode with joint order {DEFAULT_JOINT_ORDER}")
     arm = make_qarm(
         mode=MODE,
@@ -74,19 +77,26 @@ def main() -> None:
 
     env = getattr(arm, "env", None)
     if env is not None:
-        env.reset()  # zero pose; change this if you want a different starting stance
+        env.reset()  # start from a zeroed pose
 
     try:
+        # We launch the viewer *and* your script together. `run_with_viewer`
+        # keeps Panda3D on the main thread (required on macOS) while your code
+        # runs in a background worker once the window appears.
         if USE_PANDA_VIEWER:
-            print("[Blank] Viewer opening. Add your own joint commands below this line.")
-            _launch_viewer(arm)
+            print("[Blank] Viewer opening. Your code (above) keeps running.")
+            run_with_viewer(lambda: _launch_viewer(arm), lambda: student_script(arm))
         elif env is not None:
+            # No viewer? Just run your script and optionally keep physics ticking.
+            student_script(arm)
             _headless_spin(env)
         else:
             print("[Blank] No simulator to run; check MODE.")
     except KeyboardInterrupt:
         print("\n[Blank] Stopping minimal sim.")
     finally:
+        # Always return to a safe pose and disconnect cleanly. Beginners
+        # shouldn't worry about the try/except here; it's just defensive.
         try:
             arm.home()
         except Exception:
@@ -97,6 +107,38 @@ def main() -> None:
                 disconnect()
             except Exception:
                 pass
+
+
+def student_script(arm: QArmBase) -> None:
+    """
+    BEGINNER PLAYGROUND: put your experiments here.
+
+    This function runs after the viewer is on-screen (when enabled), so you can see everything.
+    Uncomment one idea at a time or replace them with your own.
+    """
+
+    time.sleep(4.0)  # wait a moment for things to settle
+
+    # --- Example 1: print the current joint angles (yaw, shoulder, elbow, wrist)
+    # print("Current joints:", arm.get_joint_positions())
+
+    # --- Example 2: nudge the elbow slightly, then print the new values
+    # joints = arm.get_joint_positions()
+    # joints[2] += 0.5  # index 2 is the elbow
+    # arm.set_joint_positions(joints)
+    # print("Moved joints:", arm.get_joint_positions())
+
+    # --- Example 3: alternate between two poses a few times
+    pose_a = [0.0, 0.3, -0.3, 0.0]
+    pose_b = [0.0, 0.6, -0.6, 0.0]
+    for i in range(5):
+        arm.set_joint_positions(pose_a)
+        time.sleep(0.5)
+        arm.set_joint_positions(pose_b)
+        time.sleep(0.5)
+
+    # Remove the `pass` when you start adding your own code.
+    pass
 
 
 if __name__ == "__main__":
