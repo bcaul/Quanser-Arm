@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import time
 from types import SimpleNamespace
+from pathlib import Path
+import math
+import json
 
 from api.factory import make_qarm
 from common.qarm_base import DEFAULT_JOINT_ORDER, QArmBase
@@ -90,6 +93,32 @@ def main() -> None:
     arm.home()
     time.sleep(STEP_DELAY_S)
 
+    # Spawn demo hoops before the viewer starts so the viewer instantiates
+    # their Panda3D nodes during setup (match demos/hoop_segments behavior).
+    try:
+        env = getattr(arm, "env", None)
+        # Skip if something already spawned kinematic objects.
+        if env is None or not getattr(env, "kinematic_objects", None):
+            try:
+                import demos.hoop_segments as _hoop_demo
+
+                try:
+                    _hoop_demo._place_first_green_over_accent(arm)
+                except Exception:
+                    pass
+                try:
+                    _hoop_demo.add_hoops(arm, _hoop_demo.DEFAULT_HOOP_DEFS)
+                    print("[PickPlace] Spawned demo hoops from demos.hoop_segments.")
+                except Exception as e:
+                    print(f"[PickPlace] Failed to spawn demo hoops: {e}")
+            except Exception:
+                # No hoop demo available; continue silently.
+                pass
+        else:
+            print("[PickPlace] Kinematic objects already present; skipping demo hoop spawn.")
+    except Exception:
+        pass
+
     try:
         if USE_PANDA_VIEWER:
             import threading
@@ -111,6 +140,14 @@ def main() -> None:
                 bridge = PhysicsBridge(time_step=env.time_step, env=env, reset=False)
                 PandaArmViewer(bridge, args).run()
 
+            # Attempt a single automatic pick of the first hoop defined in
+            # `demos/hoop_positions.json` (or the demo defaults) before the
+            # motion thread so the action is visible in the viewer.
+            try:
+                _auto_pick_first_hoop(arm)
+            except Exception:
+                pass
+
             motion = threading.Thread(target=run_sequence, args=(arm,), kwargs={"repeats": None}, daemon=True)
             motion.start()
             launch_viewer()  # blocks until window closes
@@ -124,6 +161,132 @@ def main() -> None:
             arm.home()
         except Exception:
             pass
+
+
+def _auto_pick_first_hoop(arm: QArmBase) -> bool:
+    """Pick the first enabled hoop from `demos/hoop_positions.json` using
+    an analytic yaw and PyBullet IK for the remaining joints.
+
+    Mathematical derivation (brief):
+    - Let the hoop target be p = (x, y, z) in robot base frame. The base
+      yaw rotation about Z that points the arm toward p is yaw = atan2(y, x).
+    - After applying yaw, the remaining arm is approximately planar. For a
+      planar 2R arm (shoulder/elbow) the standard law-of-cosines solution is
+      used to compute shoulder/elbow angles that reach a wrist target. Here
+      we rely on PyBullet's `calculateInverseKinematics` to solve the full
+      chain numerically, but we compute yaw analytically and enforce it so
+      the base rotation is deterministic.
+
+    Returns True if the routine executed without fatal errors.
+    """
+    try:
+        import pybullet as p
+    except Exception:
+        print("[PickPlace] PyBullet not available; cannot auto-pick.")
+        return False
+
+    env = getattr(arm, "env", None)
+    if env is None:
+        print("[PickPlace] No simulation env; cannot auto-pick.")
+        return False
+
+    # Load hoop positions (fallback to demo defaults if file missing)
+    demo_pos_file = Path(__file__).resolve().parent / "hoop_positions.json"
+    defs = None
+    if demo_pos_file.exists():
+        try:
+            with demo_pos_file.open("r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, list) and loaded:
+                defs = [d for d in loaded if d.get("enabled", True)]
+        except Exception:
+            defs = None
+
+    # Fallback: try to import the demo defaults
+    if not defs:
+        try:
+            import demos.hoop_segments as _hd
+
+            defs = [_d for _d in getattr(_hd, "DEFAULT_HOOP_DEFS", []) if _d.get("enabled", True)]
+        except Exception:
+            defs = []
+
+    if not defs:
+        print("[PickPlace] No hoop definitions found; skipping auto-pick.")
+        return False
+
+    first = defs[0]
+    pos = tuple(first.get("position", (0.0, -0.3, 0.08)))
+    tx, ty, tz = float(pos[0]), float(pos[1]), float(pos[2])
+
+    # Analytic yaw to face the hoop
+    yaw = math.atan2(ty, tx)
+
+    # Choose a small upward offset for approach and a small lower offset for grasp
+    approach_z = tz + 0.08
+    grasp_z = tz + 0.01
+
+    approach = (tx, ty, approach_z)
+    grasp = (tx, ty, grasp_z)
+
+    # Compute an IK solution for an approach pose (PyBullet provides numeric IK)
+    try:
+        ee_link_idx = getattr(env, "_gripper_base_link_index", None)
+        if ee_link_idx is None:
+            # fall back to END-EFFECTOR link index if present in mapping
+            idx_map = getattr(env, "link_name_to_index", {})
+            ee_link_idx = idx_map.get("END-EFFECTOR") or idx_map.get("GRIPPER_BASE")
+        if ee_link_idx is None:
+            print("[PickPlace] Could not determine end-effector link for IK.")
+            return False
+
+        sol = p.calculateInverseKinematics(env.robot_id, ee_link_idx, approach, physicsClientId=env.client)
+    except Exception as e:
+        print(f"[PickPlace] IK solve failed: {e}")
+        return False
+
+    # Map solution to our arm ordering (joint indices for the arm DOFs)
+    try:
+        joint_indices = getattr(arm, "joint_order", None)
+        if joint_indices is None:
+            joint_indices = getattr(env, "movable_joint_indices", [])
+        targets = [float(sol[j]) for j in joint_indices]
+    except Exception:
+        print("[PickPlace] Failed to map IK solution to joint targets.")
+        return False
+
+    # Enforce analytic yaw as the first joint target (safe, intuitive)
+    if targets:
+        targets[0] = yaw
+
+    # Move to approach, then lower, close gripper, and lift.
+    try:
+        arm.set_joint_positions(targets)
+        time.sleep(0.6)
+
+        # IK for grasp (lower)
+        sol2 = p.calculateInverseKinematics(env.robot_id, ee_link_idx, grasp, physicsClientId=env.client)
+        targets2 = [float(sol2[j]) for j in joint_indices]
+        targets2[0] = yaw
+        arm.set_joint_positions(targets2)
+        time.sleep(0.5)
+
+        # Close gripper
+        try:
+            arm.set_gripper_position(GRIPPER_CLOSED_ANGLE)
+        except Exception:
+            pass
+        time.sleep(0.5)
+
+        # Lift back to approach
+        arm.set_joint_positions(targets)
+        time.sleep(0.6)
+    except Exception as e:
+        print(f"[PickPlace] Movement failed during auto-pick: {e}")
+        return False
+
+    print("[PickPlace] Auto-pick attempted (check viewer for result).")
+    return True
 
 
 if __name__ == "__main__":
