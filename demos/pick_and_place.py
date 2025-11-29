@@ -20,7 +20,6 @@ from api.factory import make_qarm
 from common.qarm_base import DEFAULT_JOINT_ORDER, QArmBase
 
 MODE = "mirror"
-USE_MIRROR_MODE = False  # set True to drive hardware while mirroring into the simulator
 USE_PANDA_VIEWER = True
 USE_PYBULLET_GUI = False
 STEP_DELAY_S = 1.0
@@ -57,24 +56,27 @@ def go_to(arm: QArmBase, pose_name: str, wait: float) -> None:
     time.sleep(wait)
 
 
-def run_sequence(arm: QArmBase) -> None:
+def run_sequence(arm: QArmBase, *, repeats: int | None = None) -> None:
     print("[PickPlace] Joint order:", ", ".join(DEFAULT_JOINT_ORDER))
-    for action, target in SEQUENCE:
-        if target == "open":
-            print("[PickPlace] Opening gripper")
-            arm.set_gripper_position(GRIPPER_OPEN_ANGLE)
-        elif target == "close":
-            print("[PickPlace] Closing gripper")
-            arm.set_gripper_position(GRIPPER_CLOSED_ANGLE)
-        else:
-            go_to(arm, target, STEP_DELAY_S)
-        time.sleep(STEP_DELAY_S)
+    count = 0
+    while repeats is None or count < repeats:
+        for action, target in SEQUENCE:
+            if target == "open":
+                print("[PickPlace] Opening gripper")
+                arm.set_gripper_position(GRIPPER_OPEN_ANGLE)
+            elif target == "close":
+                print("[PickPlace] Closing gripper")
+                arm.set_gripper_position(GRIPPER_CLOSED_ANGLE)
+            else:
+                go_to(arm, target, STEP_DELAY_S)
+            time.sleep(STEP_DELAY_S)
+        count += 1
 
 
 def main() -> None:
     auto_step = not USE_PANDA_VIEWER
     mode = MODE.lower()
-    mirror_mode = USE_MIRROR_MODE and mode == "hardware"
+    mirror_mode = mode == "mirror"
     effective_mode = "hardware" if mirror_mode else mode
     arm = make_qarm(
         mode=effective_mode,
@@ -109,11 +111,11 @@ def main() -> None:
                 bridge = PhysicsBridge(time_step=env.time_step, env=env, reset=False)
                 PandaArmViewer(bridge, args).run()
 
-            motion = threading.Thread(target=run_sequence, args=(arm,), daemon=True)
+            motion = threading.Thread(target=run_sequence, args=(arm,), kwargs={"repeats": None}, daemon=True)
             motion.start()
             launch_viewer()  # blocks until window closes
         else:
-            run_sequence(arm)
+            run_sequence(arm, repeats=None)
     except KeyboardInterrupt:
         print("\n[PickPlace] Sequence interrupted.")
     finally:

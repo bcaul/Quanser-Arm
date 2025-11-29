@@ -44,8 +44,8 @@ class MirroredQArm(QArmBase):
     def home(self) -> None:
         self._fan_out("home")
 
-    def set_joint_positions(self, q: Sequence[float]) -> None:
-        self._fan_out("set_joint_positions", q)
+    def _set_joint_positions_instant(self, q: Sequence[float]) -> None:
+        self._fan_out("_set_joint_positions_instant", q)
 
     def get_joint_positions(self) -> list[float]:
         return self.primary.get_joint_positions()
