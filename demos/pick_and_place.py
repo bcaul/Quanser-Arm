@@ -19,7 +19,7 @@ from types import SimpleNamespace
 from api.factory import make_qarm
 from common.qarm_base import DEFAULT_JOINT_ORDER, QArmBase
 
-MODE = "mirror"
+MODE = "sim"
 USE_PANDA_VIEWER = True
 USE_PYBULLET_GUI = False
 STEP_DELAY_S = 1.0
